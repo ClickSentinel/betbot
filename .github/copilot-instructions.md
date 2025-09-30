@@ -46,7 +46,7 @@ The bot is built using `discord.py` and follows a cog-based architecture.
 
 ### Betting Round Lifecycle
 1. **`!openbet <name1> <name2>`**: Initiates a new betting round. Sets `betting["open"] = True`.
-2. **`!bet <amount> <choice>`**: Users place bets. Updates `data["betting"]["bets"]` and `data["balances"]`. If no betting round is open, the bot will respond with `MSG_NO_ACTIVE_BET`. If arguments are missing or invalid, `discord.py`'s default "missing argument" message will be shown.
+2. **`!bet <amount> <choice>`**: Users place bets. Updates `data["betting"]["bets"]` and `data["balances"]`. If no betting round is open, the bot will respond with `TITLE_NO_OPEN_BETTING_ROUND` and `MSG_NO_ACTIVE_BET`. If no betting round is open and arguments are missing or invalid, the bot will respond with `TITLE_NO_OPEN_BETTING_ROUND` and `MSG_NO_ACTIVE_BET_AND_MISSING_ARGS`. If a betting round is open but arguments are missing or invalid, the bot will respond with `TITLE_INVALID_BET_FORMAT` and `MSG_INVALID_BET_FORMAT`.
 3. **`!lockbets` or Timer Expiry**: Locks the betting round. Sets `betting["open"] = False` and `betting["locked"] = True`. Reactions are cleared from live messages.
 4. **`!declarewinner <winner_name>` or `!closebet <winner_name>`**: Declares a winner, distributes winnings, and resets the betting state.
 

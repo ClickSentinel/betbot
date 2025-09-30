@@ -50,9 +50,7 @@ COLOR_DARK_GRAY = discord.Color(0x607D8B) # Dark Gray
 
 # ---------- General Messages ----------
 MSG_AMOUNT_POSITIVE = "Amount must be a positive number."
-MSG_AMOUNT_NON_NEGATIVE = "Amount cannot be negative."
 MSG_INVALID_BET_FORMAT = "**Invalid bet format.**\nUse `!bet <contestant> <amount>` or `!bet <amount> <contestant>`.\nExample: `!bet Alice 100`"
-MSG_NO_CONTESTANTS_DEFINED = "No contestants defined for this round."
 MSG_A_WINNER_DECLARED_SOON = "A winner will be declared soon."
 MSG_PLACE_MANUAL_BET_INSTRUCTIONS = "To place a manual bet:\n`!bet <contestant> <amount>`\nExample: `!bet Alice 100`"
 MSG_WAIT_FOR_ADMIN_TO_START = "To place a bet, wait for an admin to start a round.\nWhen a round is open, use:\n`!bet <contestant> <amount>`\nExample: `!bet Alice 100`"

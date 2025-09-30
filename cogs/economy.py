@@ -4,7 +4,7 @@ from typing import Optional
 
 from config import (
     STARTING_BALANCE, COLOR_SUCCESS, COLOR_INFO, COLOR_ERROR,
-    MSG_AMOUNT_POSITIVE, MSG_AMOUNT_NON_NEGATIVE,
+    MSG_AMOUNT_POSITIVE,
     TITLE_YOUR_BALANCE, TITLE_USER_BALANCE, TITLE_INVALID_AMOUNT,
     TITLE_COINS_GIVEN, TITLE_COINS_TAKEN, TITLE_INSUFFICIENT_FUNDS, TITLE_BALANCE_SET
 )
@@ -81,7 +81,7 @@ class Economy(commands.Cog):
     async def set_balance(self, ctx: commands.Context, member: discord.Member, amount: int) -> None:
         if amount < 0:
             await self._send_embed(ctx, TITLE_INVALID_AMOUNT,
-                                   MSG_AMOUNT_NON_NEGATIVE,
+                                   MSG_AMOUNT_POSITIVE,
                                    COLOR_ERROR)
             return
 
