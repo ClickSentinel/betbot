@@ -44,6 +44,7 @@ from config import (
     MSG_NO_ACTIVE_BET_AND_MISSING_ARGS,
     TITLE_NO_OPEN_BETTING_ROUND,
     MSG_BET_CHANGED,
+    MSG_PLACE_MANUAL_BET_INSTRUCTIONS,
 )
 from data_manager import load_data, save_data, ensure_user, Data
 from utils.live_message import (
@@ -539,7 +540,38 @@ class Betting(commands.Cog):
     async def place_bet(self, ctx: commands.Context, *args) -> None:
         data = load_data()
 
-        # Check for active bet first
+        # Handle !bet with no arguments
+        if len(args) == 0:
+            if data["betting"]["open"]:
+                # Display current betting info, similar to !bettinginfo
+                contestants = data["betting"].get("contestants", {})
+                no_args_bet_info = [
+                    f"**Betting Round Status:** {'Open' if data['betting']['open'] else 'Closed'}",
+                    f"**Contestants:** {', '.join(contestants.values())}",
+                    f"**Total Bets:** {len(data['betting']['bets'])}",
+                    f"**How to bet:** {MSG_PLACE_MANUAL_BET_INSTRUCTIONS}"
+                ]
+                live_message_link = get_live_message_link(
+                    self.bot, data, data["betting"]["open"] or data["betting"]["locked"]
+                )
+                await self._send_embed(
+                    ctx,
+                    TITLE_CURRENT_BETS_OVERVIEW,
+                    "\n".join(no_args_bet_info)
+                    + (
+                        f"\n\nLive Message: {live_message_link}"
+                        if live_message_link
+                        else ""
+                    ),
+                    COLOR_INFO,
+                )
+            else:
+                await self._send_embed(
+                    ctx, TITLE_NO_OPEN_BETTING_ROUND, MSG_NO_ACTIVE_BET, COLOR_ERROR
+                )
+            return
+
+        # Existing checks for active/locked bet when arguments are provided
         if not data["betting"]["open"]:
             await self._send_embed(
                 ctx,
@@ -583,7 +615,7 @@ class Betting(commands.Cog):
                     )
                     return
         else:
-            # Incorrect number of arguments
+            # Incorrect number of arguments (this block is now only reached if len(args) is not 0 or 2)
             await self._send_embed(
                 ctx, TITLE_INVALID_BET_FORMAT, MSG_INVALID_BET_FORMAT, COLOR_ERROR
             )

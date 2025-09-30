@@ -142,8 +142,6 @@ DESC_GENERAL_HELP = (  # Updated with bullet points and bold text
     "Place a bet on one of the contestants. Example: `!bet Alice 100`\n"
     "`!balance`\n"
     "Check your current coin balance.\n"
-    "`!helpbets`\n"
-    "Show detailed help for all betting commands."
 )
 DESC_ADMIN_HELP = (  # Updated to clarify !closebet is a shortcut and include new aliases
     "Admin commands are integrated into the general help description.\n"
