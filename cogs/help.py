@@ -33,7 +33,7 @@ class Help(commands.Cog):
                                    COLOR_INFO)
         else:
             await self._send_embed(ctx, TITLE_BOT_COMMANDS, DESC_GENERAL_HELP, COLOR_INFO,
-                                   footer_text="Bet responsibly! Contact an admin if you need help.")
+                                   footer_text="Bet responsibly!")
 
     @commands.command(name="adminhelp", aliases=["ah"])
     @commands.has_permissions(manage_guild=True)
