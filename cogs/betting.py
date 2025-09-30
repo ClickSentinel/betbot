@@ -705,7 +705,7 @@ class Betting(commands.Cog):
                 COLOR_ERROR,
             )
 
-    @commands.command(name="mybet")
+    @commands.command(name="mybet", aliases=["mb"])
     async def mybet(self, ctx: commands.Context) -> None:
         data = load_data()
         if not data["betting"]["open"]:
@@ -737,7 +737,7 @@ class Betting(commands.Cog):
             COLOR_INFO,
         )
 
-    @commands.command(name="bettinginfo")
+    @commands.command(name="bettinginfo", aliases=['bi'])
     async def bettinginfo(self, ctx: commands.Context) -> None:
         data = load_data()
         if not data["betting"]["open"]:
@@ -768,18 +768,6 @@ class Betting(commands.Cog):
             + (f"\n\nLive Message: {live_message_link}" if live_message_link else ""),
             COLOR_INFO,
         )
-
-    @commands.command(name="forcewinner")
-    @commands.has_permissions(manage_guild=True)
-    async def forcewinner(self, ctx: commands.Context, *, winner_name: str) -> None:
-        data = load_data()
-        if not data["betting"]["open"]:
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_NO_ACTIVE_BET, COLOR_ERROR
-            )
-            return
-
-        await self._process_winner_declaration(ctx, data, winner_name)
 
     @commands.command(name="setbettimer")
     @commands.has_permissions(manage_guild=True)
