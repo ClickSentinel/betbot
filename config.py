@@ -126,22 +126,28 @@ TITLE_ADMIN_COMMANDS = "👑 Admin Commands"  # Retain for adminhelp command
 
 # ---------- Help Descriptions
 DESC_HELP_NOT_IMPLEMENTED = "Help for `{command_name}` is not yet implemented."
-DESC_GENERAL_HELP = (  # Updated with bullet points and bold text
-    "Welcome to BetBot!\n"
+DESC_GENERAL_HELP = (
+    "Welcome to BetBot! 🎉\n"
     "Start a betting round between two contestants, place your bets, and win coins!\n\n"
     "**How Betting Works:**\n"
     "- An admin starts a round between two contestants.\n"
-    "- Place your bet with `!bet <contestant> <amount>`.\n"
-    "- When the round ends, the admin closes it with `!closebet <winner>`.\n"
-    "- **Winners split the pot proportionally to their bet size.**\n"  # Made bold
-    "- If no one bets on the winner, the pot is lost!\n"
-    "- Check your balance anytime with `!balance`.\n"
-    "- Use `!helpbets` for detailed help.\n\n"
-    "🔗 **Current Bet**\n"
-    "`!bet <contestant> <amount>`\n"
-    "Place a bet on one of the contestants. Example: `!bet Alice 100`\n"
-    "`!balance`\n"
-    "Check your current coin balance.\n"
+    "- Place your bet with `!bet <contestant> <amount>` or by reacting to the live message.\n"
+    "- When the round ends, winners **split the pot proportionally to their bet size.**\n"
+    "- If no one bets on the winner, the pot is lost!\n\n"
+    "**User Commands:**\n"
+    "💰 `!balance`\n"
+    "   - Check your current coin balance.\n\n"
+    "💸 `!bet <contestant> <amount>`"
+    "   - Place a bet on one of the contestants. Example: `!bet Alice 100`.\n\n"
+    "📊 `!mybet`\n"
+    "   - Show your current bet in the active round.\n\n"
+    "ℹ️ `!bettinginfo`\n"
+    "   - Display current betting round information, including contestants, total pot, and a link to the live message.\n\n"
+    "**Reaction Betting:**\n"
+    "When a betting round is open, you can also place or change bets by reacting to the live betting message:\n"
+    "-   **Place/Change Bet**: React with one of the designated contestant emojis (e.g., 🔴, 🔵) to place a bet. If you react with a different emoji, your previous bet will be updated.\n"
+    "-   **Unbet**: Remove your reaction to cancel your bet.\n\n"
+    "For admin commands, please ask an admin for `!adminhelp`."
 )
 DESC_ADMIN_HELP = (  # Updated to clarify !closebet is a shortcut and include new aliases
     "Admin commands are integrated into the general help description.\n"
