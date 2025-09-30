@@ -86,18 +86,18 @@ The bot is built using `discord.py` and follows a cog-based architecture.
 **Troubleshooting Reaction Bets:**
 -   The most common issue is a missing or incorrectly implemented `on_raw_reaction_add` or `on_raw_reaction_remove` event listener, or they are not properly registered with the bot.
 
-## 5. External Dependencies
+## 6. External Dependencies
 
 - `discord.py`: The primary library for Discord bot interaction.
 - No other significant external dependencies beyond standard Python libraries are used.
 
-## 6. Project Structure
+## 7. Project Structure
 - `betbot/`: Main application directory.
 - `betbot/cogs/`: Discord cogs.
 - `betbot/utils/`: Utility functions.
 - `connection.txt`: Contains the bot token (not committed to Git).
 
-## 7. Development Environment
+## 8. Development Environment
 - Python 3.8+ is required.
 - Dependencies are managed via `pip`. A `requirements.txt` file should be created if not present, listing `discord.py`.
 
@@ -108,7 +108,7 @@ The bot is built using `discord.py` and follows a cog-based architecture.
     - The amount bet by each user.
     - How much each winning user gained.
 
-## 6. Messaging Conventions
+## 9. Messaging Conventions
 
 To maintain a consistent user experience, adhere to the following messaging guidelines:
 
@@ -154,4 +154,127 @@ TITLE_NO_OPEN_BETTING_ROUND = "⚠️ No Open Betting Round"
 - Follow the existing patterns for emoji usage, Markdown, and f-string interpolation.
 - Ensure new messages are concise and clearly convey information to the user.
 
-## 7. External Dependencies
+## 10. Testing Guidelines
+
+To ensure the robustness and correctness of this Discord bot, comprehensive testing is crucial. This section outlines key areas, categories, and a suggested approach for generating test cases.
+
+### 10.1. Identify Key Areas for Testing
+
+Focus on the bot's core functionalities, user interactions, and error handling:
+
+-   **Betting Round Management:**
+    -   `!openbet`: Starting new rounds, handling existing open/locked rounds.
+    -   `!lockbets`: Locking bets, handling already locked/closed rounds.
+    -   `!declarewinner`/`!closebet`: Declaring winners, distributing funds, resetting state, handling invalid winners.
+-   **User Betting:**
+    -   `!bet`: Placing bets (valid/invalid amounts, insufficient funds, correct parsing of `amount` and `choice`).
+    -   **Reaction Betting:** Adding/removing reactions, changing bets, insufficient funds, correct processing of emojis.
+    -   `!mybet`: Checking individual bet status.
+-   **Economy Commands:**
+    -   `!balance`: Checking user balances.
+    -   `!give`/`!take`: Modifying user balances (valid/invalid amounts, insufficient funds).
+    -   `!setbal`: Setting user balances.
+-   **Live Message Updates:**
+    -   Ensuring the live message updates correctly after `!openbet`, `!bet`, reaction bets, `!lockbets`, and winner declaration.
+    -   Correct display of timer, contestant info, bet summaries, and final results.
+-   **Timer Functionality:**
+    -   `!togglebettimer`: Enabling/disabling the timer.
+    -   Automatic locking of bets when the timer expires.
+    -   Correct timer countdown display.
+-   **Permissions:**
+    -   Ensuring admin-only commands (`!openbet`, `!lockbets`, etc.) are restricted to users with `manage_guild` permissions.
+-   **Data Persistence:**
+    -   Verifying that `data.json` is correctly loaded and saved after state changes.
+
+### 10.2. Categorize Test Cases
+
+For each feature, consider the following categories:
+
+-   **Happy Path:**
+    -   Successful execution with valid inputs.
+    -   Expected state changes and message outputs.
+-   **Edge Cases:**
+    -   Minimum/maximum bet amounts.
+    -   Betting with zero balance.
+    -   Opening a bet with identical contestant names.
+    -   Declaring a winner when no one bet on them.
+    -   Timer expiring with no bets.
+-   **Error Cases:**
+    -   Invalid command arguments (e.g., `!bet abc def`).
+    -   Insufficient funds for a bet.
+    -   Attempting to bet when no round is open or when bets are locked.
+    -   Non-admin users attempting admin commands.
+    -   Discord API errors (e.g., message not found, HTTP exceptions during reaction removal).
+
+### 10.3. Suggested Testing Framework and Approach
+
+For a Python Discord bot, `pytest` is an excellent choice for writing unit and integration tests. Since `discord.py` interactions involve external services, you'll need to mock Discord objects and API calls.
+
+**Key Techniques:**
+
+-   **Mocking:** Use `unittest.mock` (or `pytest-mock`) to simulate `discord.Message`, `discord.Context`, `discord.User`, `discord.TextChannel`, `bot.get_channel`, `message.send`, `message.add_reaction`, etc. This allows you to test your bot's logic without actually connecting to Discord.
+-   **Dependency Injection:** Design your cogs and helper functions to make it easier to inject mocked dependencies.
+-   **State Management:** For integration tests, you might want to set up a temporary `data.json` file or mock `load_data`/`save_data` to control the bot's internal state.
+
+### 10.4. Example Test Cases (Conceptual)
+
+#### Example: `!openbet`
+
+-   **Happy Path:**
+    -   Test `!openbet Alice Bob` by an admin.
+    -   Assert `data["betting"]["open"]` is `True`.
+    -   Assert `data["betting"]["contestants"]` contains "Alice" and "Bob".
+    -   Assert `_send_embed` was called with `TITLE_BETTING_ROUND_OPENED`.
+    -   Assert `_add_betting_reactions` was called on the live message.
+    -   If timer enabled, assert `bet_timer_task` is running and `timer_end_time` is set.
+-   **Error Cases:**
+    -   Test `!openbet Alice Bob` by a non-admin.
+    -   Assert `_send_embed` was called with a permission error.
+    -   Assert `data["betting"]` state remains unchanged.
+    -   Test `!openbet` when a round is already open.
+    -   Assert `_send_embed` was called with `MSG_BET_ALREADY_OPEN`.
+
+#### Example: `!bet`
+
+-   **Happy Path:**
+    -   Set up an open betting round.
+    -   Test `!bet Alice 100`.
+    -   Assert user's balance decreased by 100.
+    -   Assert `data["betting"]["bets"]` contains the new bet.
+    -   Assert `update_live_message` was called.
+    -   Assert `_send_embed` was called with `TITLE_BET_PLACED`.
+-   **Error Cases:**
+    -   Test `!bet` with no open betting round.
+    -   Assert `_send_embed` was called with `TITLE_NO_OPEN_BETTING_ROUND` and `MSG_NO_ACTIVE_BET_AND_MISSING_ARGS`.
+    -   Test `!bet Alice 100` with insufficient funds.
+    -   Assert `_send_embed` was called with "Insufficient balance!" message.
+    -   Test `!bet invalid_choice 100`.
+    -   Assert `_send_embed` was called with `TITLE_INVALID_BET_FORMAT`.
+
+#### Example: Reaction Betting (`on_raw_reaction_add`)
+
+-   **Happy Path (New Bet):**
+    -   Set up an open betting round.
+    -   Simulate a user reacting with a valid emoji (e.g., "🔴").
+    -   Assert user's balance decreased.
+    -   Assert `data["betting"]["bets"]` contains the new bet with the correct emoji.
+    -   Assert `update_live_message` was called.
+    -   Assert no direct message was sent to the user.
+-   **Happy Path (Change Bet):**
+    -   Set up an open betting round with an existing bet for a user (e.g., on "Alice" with "🔴").
+    -   Simulate the same user reacting with a different valid emoji (e.g., "🔵" for "Bob").
+    -   Assert previous bet amount was refunded.
+    -   Assert new bet amount was deducted.
+    -   Assert `data["betting"]["bets"]` reflects the new bet on "Bob".
+    -   Assert `message.remove_reaction` was called for the old emoji ("🔴").
+    -   Assert `_send_embed` was called with `MSG_BET_CHANGED`.
+    -   Assert `update_live_message` was called.
+-   **Error Cases:**
+    -   Simulate reaction when betting is locked.
+    -   Assert reaction is removed and no bet is placed.
+    -   Simulate reaction with insufficient funds.
+    -   Assert reaction is removed and an embed is sent to the channel.
+
+## 11. Development Environment
+- Python 3.8+ is required.
+- Dependencies are managed via `pip`. A `requirements.txt` file should be created if not present, listing `discord.py`.
