@@ -1,0 +1,17 @@
+.env
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+
+# Editor-specific files
+.vscode/
+
+# Discord Bot specific files
+data.json
+connection.txt
