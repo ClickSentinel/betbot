@@ -123,6 +123,7 @@ TITLE_BALANCE_SET = "✅ Balance Set"
 TITLE_HELP = "Help"  # Retain for specific command help if implemented
 TITLE_BOT_COMMANDS = "🤖 BetBot Commands"  # Updated title
 TITLE_ADMIN_COMMANDS = "👑 Admin Commands"  # Retain for adminhelp command
+ROLE_BETBOY = "betboy"
 
 # ---------- Help Descriptions
 DESC_HELP_NOT_IMPLEMENTED = "Help for `{command_name}` is not yet implemented."
@@ -151,7 +152,7 @@ DESC_GENERAL_HELP = (
 )
 DESC_ADMIN_HELP = (  # Updated to clarify !closebet is a shortcut and include new aliases
     "Admin commands are integrated into the general help description.\n"
-    "Please use `!help` for a full overview of how betting works, including admin actions like starting and closing bets.\n\n"
+    "Please use `!help` for a full overview of how betting works, including admin actions like starting and closing bets.\n **TO OPEN BETS, USER MUST HAVE `betboy` ROLE.**\n\n"
     "**Quick Admin Command List:**\n"
     "`!openbet <name1> <name2>` / `!ob` - Start a new betting round.\n"
     "`!lockbets` / `!lb` - Lock current bets.\n"

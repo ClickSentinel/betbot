@@ -1,4 +1,5 @@
 import discord
+import discord.utils
 from discord.ext import commands
 from typing import Optional, Tuple
 import asyncio
@@ -38,7 +39,7 @@ from config import (
     TITLE_BETTING_CHANNEL_SET,
     TITLE_TIMER_TOGGLED,
     TITLE_CURRENT_BETS_OVERVIEW,
-    TITLE_BETTING_LOCKED_OVERVIEW,
+    ROLE_BETBOY,
     TITLE_LIVE_BETTING_ROUND,
     TITLE_POT_LOST,
     MSG_NO_ACTIVE_BET_AND_MISSING_ARGS,
@@ -312,9 +313,32 @@ class Betting(commands.Cog):
     # --- Discord Commands ---
 
     @commands.command(name="openbet", aliases=["ob"])
-    @commands.has_permissions(manage_guild=True)
     async def openbet(self, ctx: commands.Context, name1: str, name2: str) -> None:
         data = load_data()
+
+        # Check if the user has the required role
+        # ctx.author can be discord.User (in DMs) or discord.Member (in guilds)
+        # Only discord.Member has the 'roles' attribute.
+        if not isinstance(ctx.author, discord.Member):
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "This command can only be used in a server channel.",
+                COLOR_ERROR,
+            )
+            return
+
+        required_role = discord.utils.get(ctx.author.roles, name=ROLE_BETBOY)
+
+        if required_role is None:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                f"You need the '{ROLE_BETBOY}' role to open betting rounds.",
+                COLOR_ERROR,
+            )
+            return
+
         if data["betting"]["open"]:
             await self._send_embed(
                 ctx, TITLE_BETTING_ERROR, MSG_BET_ALREADY_OPEN, COLOR_ERROR
