@@ -6,6 +6,7 @@ import os
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+
 class BotRestarter(FileSystemEventHandler):
     def __init__(self, bot_script_name):
         self.bot_script_name = bot_script_name
@@ -22,21 +23,29 @@ class BotRestarter(FileSystemEventHandler):
 
         if sys.platform == "win32":
             python_executable = os.path.join(venv_path, "Scripts", "python.exe")
-        else: # Linux, macOS
+        else:  # Linux, macOS
             python_executable = os.path.join(venv_path, "bin", "python")
-        
+
         if not os.path.exists(python_executable):
-            print(f"Warning: Venv Python not found at '{python_executable}'. Falling back to current Python.", file=sys.stderr)
+            print(
+                f"Warning: Venv Python not found at '{python_executable}'. Falling back to current Python.",
+                file=sys.stderr,
+            )
             return sys.executable
         return python_executable
 
     def _start_bot(self):
         """Starts the bot process."""
-        bot_script_full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.bot_script_name)
+        bot_script_full_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), self.bot_script_name
+        )
         # Changed print statement to only show the Python executable path
         print(f"Starting bot using {self.venv_python_executable}")
         # Set cwd to the bot's directory so it can find its modules (config, data_manager, etc.)
-        return subprocess.Popen([self.venv_python_executable, bot_script_full_path], cwd=os.path.dirname(bot_script_full_path))
+        return subprocess.Popen(
+            [self.venv_python_executable, bot_script_full_path],
+            cwd=os.path.dirname(bot_script_full_path),
+        )
 
     def _restart_bot_action(self):
         """Terminates the old bot process and starts a new one."""
@@ -47,7 +56,9 @@ class BotRestarter(FileSystemEventHandler):
                 try:
                     self.bot_process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    print("Bot process did not terminate gracefully, forcefully killing it.")
+                    print(
+                        "Bot process did not terminate gracefully, forcefully killing it."
+                    )
                     self.bot_process.kill()
                     self.bot_process.wait()
             print("Restarting bot...")
@@ -56,21 +67,24 @@ class BotRestarter(FileSystemEventHandler):
     def on_modified(self, event):
         # Only react to .py file modifications
         _, ext = os.path.splitext(event.src_path)
-        if ext == '.py':
+        if ext == ".py":
             script_dir_abs = os.path.abspath(os.path.dirname(__file__))
             event_src_path_abs = os.path.abspath(event.src_path)
 
             # Ensure the modified file is within the watched directory (betbot)
-            if event_src_path_abs.startswith(script_dir_abs + os.sep) or event_src_path_abs == script_dir_abs: # type: ignore
+            if event_src_path_abs.startswith(script_dir_abs + os.sep) or event_src_path_abs == script_dir_abs:  # type: ignore
                 with self._lock:
                     # Cancel any pending restart to debounce multiple rapid changes
                     if self._restart_timer is not None:
                         self._restart_timer.cancel()
-                    
-                    print(f"Detected change in {os.path.basename(event.src_path)}, scheduling bot restart...")
+
+                    print(
+                        f"Detected change in {os.path.basename(event.src_path)}, scheduling bot restart..."
+                    )
                     # Schedule a restart after a short delay (e.g., 1 second)
                     self._restart_timer = threading.Timer(1.0, self._restart_bot_action)
                     self._restart_timer.start()
+
 
 if __name__ == "__main__":
     # The watcher will monitor the 'betbot' directory
@@ -81,7 +95,9 @@ if __name__ == "__main__":
     observer = Observer()
     observer.schedule(event_handler, watched_path, recursive=True)
     observer.start()
-    print(f"Watcher started. Monitoring '{watched_path}' for .py file changes. Bot will restart on code changes.")
+    print(
+        f"Watcher started. Monitoring '{watched_path}' for .py file changes. Bot will restart on code changes."
+    )
     try:
         while True:
             time.sleep(1)
