@@ -549,7 +549,7 @@ class Betting(commands.Cog):
                     f"**Betting Round Status:** {'Open' if data['betting']['open'] else 'Closed'}",
                     f"**Contestants:** {', '.join(contestants.values())}",
                     f"**Total Bets:** {len(data['betting']['bets'])}",
-                    f"**How to bet:** {MSG_PLACE_MANUAL_BET_INSTRUCTIONS}"
+                    f"**How to bet:** {MSG_PLACE_MANUAL_BET_INSTRUCTIONS}",
                 ]
                 live_message_link = get_live_message_link(
                     self.bot, data, data["betting"]["open"] or data["betting"]["locked"]
@@ -737,7 +737,7 @@ class Betting(commands.Cog):
             COLOR_INFO,
         )
 
-    @commands.command(name="bettinginfo", aliases=['bi'])
+    @commands.command(name="bettinginfo", aliases=["bi"])
     async def bettinginfo(self, ctx: commands.Context) -> None:
         data = load_data()
         if not data["betting"]["open"]:
@@ -790,34 +790,6 @@ class Betting(commands.Cog):
             TITLE_TIMER_TOGGLED,
             f"Bet timer duration set to `{seconds}` seconds.",
             COLOR_SUCCESS,
-        )
-
-    @commands.command(name="bettingsummary")
-    async def betting_summary(self, ctx: commands.Context) -> None:
-        data = load_data()
-        if not data["betting"]["open"]:
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_NO_ACTIVE_BET, COLOR_ERROR
-            )
-            return
-
-        total_bets = len(data["betting"]["bets"])
-        contestant1_bets = sum(
-            1
-            for bet in data["betting"]["bets"].values()
-            if bet["choice"] == "contestant_1"
-        )
-        contestant2_bets = sum(
-            1
-            for bet in data["betting"]["bets"].values()
-            if bet["choice"] == "contestant_2"
-        )
-
-        await self._send_embed(
-            ctx,
-            TITLE_BETTING_LOCKED_OVERVIEW,
-            f"Total Bets: `{total_bets}`\nBets on Contestant 1: `{contestant1_bets}`\nBets on Contestant 2: `{contestant2_bets}`",
-            COLOR_INFO,
         )
 
     @commands.command(name="manualbet")
