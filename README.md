@@ -9,9 +9,9 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 - **Dual Betting Interface**: Command-based (`!bet`) and themed emoji reactions
 - **Smart Timer System**: 90-second rounds with optimized 5-second interval updates
 - **Themed Emojis**: Power/Victory (🔥⚡💪🏆) vs Excellence/Royalty (🌟💎🚀👑) themes
-- **Live Message Updates**: Real-time betting progress with visual feedback
+- **Batched Live Updates**: Intelligent 5-second batching reduces API calls by 80%
 - **Role-Based Permissions**: Flexible admin system with betboy role support
-- **Production Ready**: Comprehensive logging, error handling, and 35+ automated tests
+- **Production Ready**: Comprehensive logging, error handling, and 51 automated tests
 
 ## 🚀 Quick Start
 
@@ -95,12 +95,20 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 - Remove reaction to cancel bet → Full refund
 - Manual commands automatically remove reaction bets
 
+## ⚡ Performance Features
+
+**Intelligent Live Message Batching**: Multiple rapid bet changes are consolidated into single Discord API calls every 5 seconds, reducing API usage from 60+ calls/minute to maximum 12 calls/minute during busy periods while maintaining real-time user experience.
+
 ## 🛠️ Development
 
 ### Testing
 ```bash
-# Run all tests (35 passing)
+# Run all tests (51 passing)
 python -m pytest
+
+# Run specific test modules
+python -m pytest tests/test_live_message_scheduler.py -v  # Scheduler tests
+python -m pytest tests/test_betting.py -v                # Betting logic tests
 
 # Development mode with auto-restart
 python watcher.py
@@ -126,7 +134,7 @@ betbot/
 │   ├── logger.py           # Logging system
 │   ├── error_handler.py    # Error management
 │   └── performance_monitor.py # System monitoring
-└── tests/                   # Test suite (35 tests)
+└── tests/                   # Test suite (51 tests)
 ```
 
 ## 🔒 Permission System
@@ -150,7 +158,7 @@ betbot/
 **🎲 BetBot - Where Every Bet Counts! 🎲**
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org)
-[![Tests](https://img.shields.io/badge/Tests-35%2F35%20Passing-green)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-51%2F51%20Passing-green)](tests/)
 [![Code Quality](https://img.shields.io/badge/Vibe%20Coded-100%25-purple)]()
 
 </div>

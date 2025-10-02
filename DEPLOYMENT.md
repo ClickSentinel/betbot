@@ -9,9 +9,10 @@
 This deployment guide covers the latest enhancements including:
 - **Enhanced Timer System**: 90-second timer with selective updates
 - **Themed Emoji System**: Power/Victory vs Excellence/Royalty themes
+- **Batched Live Updates**: 5-second intelligent batching reduces API calls by 80%
 - **Improved User Experience**: Better error messages and visual formatting
-- **Rate Limiting Protection**: Discord API optimization
-- **Comprehensive Testing**: 35 automated tests ensure reliability
+- **Rate Limiting Protection**: Advanced Discord API optimization
+- **Comprehensive Testing**: 51 automated tests ensure reliability
 
 ## Setup Steps
 
@@ -120,7 +121,7 @@ tail -f bot.log
 - Timer functionality: Start betting round and verify 90-second countdown
 - Check memory usage: `free -h`
 - Check disk space: `df -h`
-- Run test suite: `python -m pytest` (should show 35/35 passing)
+- Run test suite: `python -m pytest` (should show 51/51 passing)
 
 ### 6. Backup & Recovery
 
@@ -161,7 +162,7 @@ pip install -r requirements.txt --upgrade
 # Run tests to ensure stability
 python -m pytest
 
-# If tests pass (35/35), restart bot
+# If tests pass (51/51), restart bot
 sudo systemctl start betbot
 
 # Verify new features work
@@ -197,6 +198,14 @@ After deployment, verify these critical improvements:
 ```bash
 # Place reaction bet (click emoji), then use !bet command
 # Verify old reaction is automatically removed
+```
+
+**5. Batched Live Updates:**
+```bash
+# Have multiple users place rapid bets (within 5 seconds)
+# Verify: Live message updates once every 5 seconds, showing all bet changes
+# Check logs: Should show "Processing batched updates" instead of individual calls
+```
 ```
 
 **5. Detailed Payout Messages:**
@@ -245,6 +254,7 @@ After deployment, verify these critical improvements:
 
 **✨ New Performance Features (October 2025):**
 - **Selective Timer Updates**: Only 19 updates over 90 seconds (not every second)
+- **Batched Live Updates**: 5-second intelligent batching reduces API calls by 80%
 - **Rate Limiting Protection**: Automatic Discord API optimization
 - **Background Processing**: Non-blocking timer and reaction handling
 
@@ -253,6 +263,9 @@ After deployment, verify these critical improvements:
 # Enhanced rate limiting (new feature)
 ENABLE_RATE_LIMITING=true
 REACTION_DELAY_MS=300
+
+# Batched updates automatically handle rapid betting
+# No additional configuration needed - handles 60+ bets/min efficiently
 
 # Increase rate limits
 MAX_BETS_PER_DAY=100
