@@ -1332,11 +1332,6 @@ class Betting(commands.Cog):
             print(f"Error fetching message or user for reaction: {e}")
             return
 
-        # Remove any existing reactions from this user except the new one
-        await self._remove_user_betting_reactions(
-            message, user, data, exclude_emoji=str(payload.emoji)
-        )
-
         # Determine contestant from emoji
         contestant_id = _get_contestant_from_emoji(data, str(payload.emoji))
         if not contestant_id:
@@ -1373,7 +1368,7 @@ class Betting(commands.Cog):
             await channel.send(embed=embed)
             return
 
-        # Process the bet
+        # Process the bet first (this handles bet changes atomically)
         user_id_str = str(user.id)
         previous_bet_info = data["betting"]["bets"].get(user_id_str)
 
@@ -1387,7 +1382,13 @@ class Betting(commands.Cog):
             notify_user=False,  # Don't send notification messages for reaction bets
         )
 
-        if not success:
+        if success:
+            # Only after successful bet placement, remove old reactions
+            # This ensures the live message shows a smooth transition from old bet to new bet
+            await self._remove_user_betting_reactions(
+                message, user, data, exclude_emoji=str(payload.emoji)
+            )
+        else:
             # If bet failed, remove the reaction
             await message.remove_reaction(payload.emoji, user)
             
