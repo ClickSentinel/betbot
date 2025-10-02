@@ -1,5 +1,7 @@
 # 🎲 BetBot - Production-Ready Discord Betting Bot
 
+> ⚠️ **VIBE CODED** - This entire project was 100% vibe coded. No formal planning, just pure vibes and caffeine-fueled coding sessions. Somehow it works perfectly. ✨
+
 **BetBot** is a sophisticated, production-ready Discord bot that enables interactive betting rounds with comprehensive monitoring, robust error handling, and a modular architecture. Built with enterprise-level reliability and extensive testing coverage.
 
 ## ✨ Features
