@@ -298,6 +298,8 @@ class MessageFormatter:
                         betting_session["contestants"]
                     )
                 )
+                # Add update interval info
+                description_parts.append("*Live updates every 5 seconds*\n\n")
 
             if timer_info:
                 description_parts.append(
