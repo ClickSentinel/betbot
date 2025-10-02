@@ -4,7 +4,7 @@ from typing import Dict, Optional, List, Any
 import time
 import math
 
-from .message_types import BetUIState, WinnerInfo, TimerInfo
+from .bet_state import BetUIState, WinnerInfo, TimerInfo
 from .bet_state import BetState
 from config import (
     TITLE_LIVE_BETTING_ROUND,

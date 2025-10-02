@@ -2,7 +2,7 @@ from typing import List, Dict, Optional, Any, Mapping
 import discord
 import math
 import time
-from .message_types import BetInfo, WinnerInfo, BettingSession, TimerInfo
+from .bet_state import BetInfo, WinnerInfo, BettingSession, TimerInfo
 from config import (
     CONTESTANT_EMOJIS,
     MSG_NO_BETS_PLACED_YET,

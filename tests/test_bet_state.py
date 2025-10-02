@@ -9,7 +9,7 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 from betbot.utils.bet_state import BetState, Economy
-from betbot.utils.message_types import BetInfo, WinnerInfo
+from betbot.utils.bet_state import BetInfo, WinnerInfo
 
 class TestBetState:
     @pytest.fixture

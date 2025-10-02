@@ -70,7 +70,7 @@ from utils.live_message import (
     get_secondary_live_message_info,
 )
 from utils.bet_state import BetState
-from utils.message_types import WinnerInfo
+from utils.bet_state import WinnerInfo
 
 
 class Betting(commands.Cog):
