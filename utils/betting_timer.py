@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from config import BET_TIMER_DURATION, BET_TIMER_UPDATE_INTERVAL
 from data_manager import Data, save_data, load_data
-from utils.live_message import update_live_message
+from utils.live_message import update_live_message, schedule_live_message_update
 from utils.logger import logger
 
 
@@ -68,6 +68,7 @@ class BettingTimer:
                 
                 # Also update if this is the first update or if enough time has passed since last update
                 if should_update and (last_update_time is None or remaining_time != last_update_time):
+                    # Use direct update for timer displays to ensure accurate countdown
                     await update_live_message(self.bot, data, current_time=current_time)
                     last_update_time = remaining_time
                     logger.info(f"Timer update: {remaining_time} seconds remaining")
@@ -109,7 +110,11 @@ class BettingTimer:
             bet_summary="Timer expired - bets are now locked"
         )
         
-        # Update live message
+        # Update live message immediately to show locked state
+        # Use direct update instead of batched to ensure immediate feedback
         await update_live_message(
             self.bot, data, betting_closed=True, close_summary=lock_summary
         )
+        
+        # Also schedule a batched update to handle any last-moment bets that might be pending
+        schedule_live_message_update()

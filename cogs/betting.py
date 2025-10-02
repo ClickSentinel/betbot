@@ -98,9 +98,8 @@ class Betting(commands.Cog):
         await BettingUtils.send_embed(ctx, title, description, color)
 
     def _clear_timer_state_in_data(self, data: Data) -> None:
-        """Clears timer-related data."""
+        """Clears timer-related data. Note: Does not save data - caller must save."""
         data["timer_end_time"] = None
-        save_data(data)
 
     async def _process_bet(
         self,
@@ -557,9 +556,13 @@ class Betting(commands.Cog):
                     print(f"Error clearing reactions from live message {msg_id}: {e}")
         # End re-added functionality
 
+        # Update live message immediately to show locked state
         await update_live_message(
             self.bot, data, betting_closed=True, close_summary=lock_summary
         )
+        
+        # Also schedule a batched update to handle any last-moment bets that might be pending
+        schedule_live_message_update()
         if not silent_lock:  # Only send the locked message if not a silent lock
             await self._send_embed(
                 ctx, TITLE_BETS_LOCKED, lock_summary, COLOR_DARK_ORANGE
