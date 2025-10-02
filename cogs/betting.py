@@ -1,8 +1,15 @@
 import discord
 import discord.utils
 from discord.ext import commands
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 import asyncio
+import time
+
+# Add enhanced logging
+from utils.logger import logger
+from utils.performance_monitor import performance_monitor, performance_timer
+from utils.betting_timer import BettingTimer
+from utils.betting_utils import BettingPermissions, BettingUtils
 
 from config import (
     SEPARATOR_EMOJI,
@@ -24,6 +31,7 @@ from config import (
     MSG_INTERNAL_ERROR_LOCKED,
     MSG_AMOUNT_POSITIVE,
     MSG_INVALID_BET_FORMAT,
+    MSG_UNKNOWN_CONTESTANT,
     MSG_FAILED_SEND_LIVE_MESSAGE,
     MSG_BETTING_LOCKED_SUMMARY,
     MSG_BETTING_TIMER_EXPIRED_SUMMARY,
@@ -44,8 +52,10 @@ from config import (
     TITLE_POT_LOST,
     MSG_NO_ACTIVE_BET_AND_MISSING_ARGS,
     TITLE_NO_OPEN_BETTING_ROUND,
-    MSG_BET_CHANGED,
     MSG_PLACE_MANUAL_BET_INSTRUCTIONS,
+    MSG_INVALID_OPENBET_FORMAT,
+    MSG_BET_CHANGED,
+    MSG_BET_LOCKED_WITH_LIVE_LINK,
 )
 from data_manager import load_data, save_data, ensure_user, Data
 from utils.live_message import (
@@ -59,68 +69,314 @@ from utils.live_message import (
     get_live_message_link,
     get_secondary_live_message_info,
 )
+from utils.bet_state import BetState
+from utils.message_types import WinnerInfo
 
 
 class Betting(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.bet_timer_task: Optional[asyncio.Task] = None
+        self.timer = BettingTimer(bot)
+        data = load_data()
+        self.bet_state = BetState(data)
 
     # --- Helper Methods for Deduplication ---
+
+    async def _check_permission(self, ctx: commands.Context, action: str) -> bool:
+        """Centralized permission check for betting actions."""
+        return await BettingPermissions.check_permission(ctx, action)
 
     async def _send_embed(
         self, ctx: commands.Context, title: str, description: str, color: discord.Color
     ) -> None:
         """Sends a consistent embed message."""
-        embed = discord.Embed(title=title, description=description, color=color)
-        await ctx.send(embed=embed)
+        await BettingUtils.send_embed(ctx, title, description, color)
 
     def _clear_timer_state_in_data(self, data: Data) -> None:
         """Clears timer-related data."""
         data["timer_end_time"] = None
         save_data(data)
 
+    async def _process_bet(
+        self,
+        channel: Optional[discord.TextChannel],
+        data: Data,
+        user_id: str,
+        amount: int,
+        choice: str,
+        emoji: Optional[str] = None,
+        notify_user: bool = True,
+    ) -> bool:
+        """Centralized bet processing logic.
+        Returns True if bet was successful, False otherwise."""
+
+        # Ensure the user has an account and validate their balance
+        ensure_user(data, user_id)
+        user_balance = data["balances"][user_id]
+
+        if amount <= 0:
+            if notify_user and channel:
+                await channel.send(
+                    embed=discord.Embed(
+                        title=TITLE_BETTING_ERROR,
+                        description=MSG_AMOUNT_POSITIVE,
+                        color=COLOR_ERROR,
+                    )
+                )
+            return False
+
+        if amount > user_balance:
+            if notify_user and channel:
+                await channel.send(
+                    embed=discord.Embed(
+                        title=TITLE_BETTING_ERROR,
+                        description=f"Insufficient balance! Current balance is `{user_balance}` coins.",
+                        color=COLOR_ERROR,
+                    )
+                )
+            return False
+
+        # Find and validate contestant
+        contestant_info = self._find_contestant_info(data, choice)
+        if not contestant_info:
+            if notify_user and channel:
+                # Generate helpful error message with available contestants
+                contestants = data["betting"].get("contestants", {})
+                if contestants:
+                    contestants_list = "\n".join([f"• **{name}**" for name in contestants.values()])
+                    example_contestant = list(contestants.values())[0]
+                    error_msg = MSG_UNKNOWN_CONTESTANT.format(
+                        contestant_name=choice,
+                        contestants_list=contestants_list,
+                        example_contestant=example_contestant
+                    )
+                else:
+                    error_msg = "No betting round is currently active."
+                
+                await channel.send(
+                    embed=discord.Embed(
+                        title=TITLE_BETTING_ERROR,
+                        description=error_msg,
+                        color=COLOR_ERROR,
+                    )
+                )
+            return False
+
+        contestant_id, contestant_name = contestant_info
+
+        # Check if user has an existing bet with an emoji (reaction bet) and this is a manual bet
+        existing_bet = data["betting"]["bets"].get(user_id)
+        old_emoji = existing_bet.get("emoji") if existing_bet else None
+        
+        # If placing a manual bet (no emoji) after a reaction bet (has emoji), remove the old reaction
+        if old_emoji and not emoji:
+            await self._remove_old_reaction_bet(data, user_id, old_emoji)
+
+        # Use BetState to handle bet placement which will handle refunds and balance updates
+        bet_state = BetState(data)
+        if not bet_state.place_bet(user_id, amount, contestant_name, emoji):
+            logger.warning(f"Bet placement failed for user {user_id}: {amount} on {contestant_name}")
+            return False
+
+        # Log successful bet placement
+        logger.info(f"Bet placed: User {user_id} bet {amount} coins on {contestant_name}")
+        performance_monitor.record_metric('bet.placed', 1, {
+            'contestant': contestant_name,
+            'amount': str(amount)
+        })
+
+        # Update live message (let it calculate timer internally for consistency)
+        await update_live_message(self.bot, data)
+
+        # Notify user if requested
+        if notify_user and channel:
+            await channel.send(
+                embed=discord.Embed(
+                    title=TITLE_BET_PLACED,
+                    description=f"Your bet of `{amount}` coins on **{contestant_name}** has been placed!",
+                    color=COLOR_SUCCESS,
+                )
+            )
+
+        return True
+
     def _find_contestant_info(
         self, data: Data, choice_input: str
     ) -> Optional[Tuple[str, str]]:
         """Finds a contestant ID and name based on partial input."""
-        contestants = data["betting"].get("contestants", {})
-        choice_lower = choice_input.lower()
-
-        for c_id, c_name in contestants.items():
-            if c_name.lower().startswith(choice_lower):
-                return c_id, c_name
-        return None
+        return BettingUtils.find_contestant_info(data, choice_input)
 
     async def _add_betting_reactions(
         self, message: discord.Message, data: Data
     ) -> None:
-        """Adds all configured betting reactions to a message."""
-        all_emojis_to_add = (
-            data["contestant_1_emojis"]
-            + [SEPARATOR_EMOJI]
-            + data["contestant_2_emojis"]
-        )
-        for emoji in all_emojis_to_add:
+        """Adds all configured betting reactions to a message with rate limiting protection."""
+        # Prioritize most commonly used reactions first (100 and 250 coin bets)
+        c1_emojis = data["contestant_1_emojis"]
+        c2_emojis = data["contestant_2_emojis"]
+        
+        # Add reactions grouped by contestant for logical order
+        priority_order = [
+            c1_emojis[0],  # First contestant, 100 coins (🔥)
+            c1_emojis[1],  # First contestant, 250 coins (⚡)
+            c1_emojis[2],  # First contestant, 500 coins (💪)
+            c1_emojis[3],  # First contestant, 1000 coins (🏆)
+            SEPARATOR_EMOJI,  # Visual separator
+            c2_emojis[0],  # Second contestant, 100 coins (🌟)
+            c2_emojis[1],  # Second contestant, 250 coins (�)
+            c2_emojis[2],  # Second contestant, 500 coins (🚀)
+            c2_emojis[3],  # Second contestant, 1000 coins (👑)
+        ]
+        
+        # Add reactions with proper spacing to avoid rate limits
+        for i, emoji in enumerate(priority_order):
+            await self._add_single_reaction_with_retry(message, emoji)
+            # Small delay between reactions (Discord limit: ~1 per 0.25s)
+            if i < len(priority_order) - 1:
+                await asyncio.sleep(0.3)
+
+    async def _add_single_reaction_with_retry(
+        self, message: discord.Message, emoji: str, max_retries: int = 2
+    ) -> None:
+        """Add a single reaction with retry logic for rate limiting."""
+        for attempt in range(max_retries + 1):
             try:
                 await message.add_reaction(emoji)
+                return  # Success, exit the retry loop
             except discord.HTTPException as e:
-                print(f"Could not add reaction {emoji} to live message: {e}")
+                if "rate limited" in str(e).lower() or "429" in str(e):
+                    if attempt < max_retries:
+                        # Exponential backoff: 0.5s, 1.5s, 3s
+                        wait_time = 0.5 * (2 ** attempt)
+                        print(f"Rate limited adding reaction {emoji}, waiting {wait_time}s (attempt {attempt + 1})")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        print(f"Failed to add reaction {emoji} after {max_retries + 1} attempts: {e}")
+                        return
+                else:
+                    print(f"Could not add reaction {emoji} to live message: {e}")
+                    return
+
+    def _add_reactions_background(self, message: discord.Message, data: Data) -> None:
+        """Start adding reactions in the background without blocking."""
+        asyncio.create_task(self._add_betting_reactions(message, data))
 
     async def _remove_user_betting_reactions(
-        self, message: discord.Message, user: discord.abc.User, data: Data
+        self,
+        message: discord.Message,
+        user: discord.abc.User,
+        data: Data,
+        exclude_emoji: Optional[str] = None,
     ) -> None:
-        """Removes all betting reactions from a specific user on a message.
+        """Removes all betting reactions from a specific user on a message,
+        optionally excluding one emoji.
         Accepts discord.User or discord.Member (which inherits from User).
         """
+        # print(f"DEBUG: Attempting to remove reactions for user {user.name} (ID: {user.id}) on message {message.id}")
         all_betting_emojis = data["contestant_1_emojis"] + data["contestant_2_emojis"]
+        # print(f"DEBUG: All configured betting emojis: {all_betting_emojis}")
         for emoji_str in all_betting_emojis:
+            if emoji_str == exclude_emoji:
+                # print(f"DEBUG: Skipping removal of exclude_emoji: {emoji_str}")
+                continue  # Skip the emoji that was just added
+
             try:
+                # print(f"DEBUG: Removing reaction: {emoji_str}")
                 await message.remove_reaction(emoji_str, user)
+                # print(f"DEBUG: Successfully removed reaction: {emoji_str}")
             except discord.NotFound:
+                # print(f"DEBUG: Reaction {emoji_str} not found for user {user.name}, skipping.")
                 pass
             except discord.HTTPException as e:
-                print(f"Error removing reaction {emoji_str} from user {user.name}: {e}")
+                print(
+                    f"ERROR: Failed to remove reaction {emoji_str} from user {user.name}: {e}"
+                )
+
+    async def _remove_old_reaction_bet(
+        self, data: Data, user_id: str, old_emoji: str
+    ) -> None:
+        """Remove a user's old reaction bet from live message(s) when they place a manual bet."""
+        try:
+            user = await self.bot.fetch_user(int(user_id))
+        except (discord.NotFound, discord.HTTPException, ValueError) as e:
+            print(f"ERROR: Could not fetch user {user_id} to remove old reaction: {e}")
+            return
+
+        # Get live message info and remove reaction from both main and secondary messages
+        main_msg_id, main_chan_id = get_live_message_info(data)
+        secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
+
+        # Remove from main message
+        if main_msg_id and main_chan_id:
+            await self._remove_reaction_from_message(main_chan_id, main_msg_id, user, old_emoji)
+
+        # Remove from secondary message
+        if secondary_msg_id and secondary_chan_id:
+            await self._remove_reaction_from_message(secondary_chan_id, secondary_msg_id, user, old_emoji)
+
+    async def _remove_reaction_from_message(
+        self, channel_id: int, message_id: int, user: discord.abc.User, emoji: str
+    ) -> None:
+        """Helper method to remove a specific reaction from a specific message."""
+        try:
+            channel = self.bot.get_channel(channel_id)
+            if not isinstance(channel, discord.TextChannel):
+                return
+
+            message = await channel.fetch_message(message_id)
+            await message.remove_reaction(emoji, user)
+            print(f"DEBUG: Removed reaction {emoji} from user {user.name} on message {message_id}")
+        except discord.NotFound:
+            # Message or reaction not found, that's fine
+            pass
+        except discord.HTTPException as e:
+            print(f"ERROR: Failed to remove reaction {emoji} from user {user.name} on message {message_id}: {e}")
+
+    async def _create_payout_summary(self, winner_info: WinnerInfo, user_names: Dict[str, str]) -> str:
+        """Create a detailed summary of payouts for all users."""
+        user_results = winner_info.get("user_results", {})
+        if not user_results:
+            return "No bets were placed in this round."
+        
+        # Separate winners and losers
+        winners = []
+        losers = []
+        
+        for user_id, result in user_results.items():
+            user_name = user_names.get(user_id, f"Unknown User ({user_id})")
+            net_change = result["net_change"]
+            winnings = result["winnings"]
+            bet_amount = result["bet_amount"]
+            
+            if net_change > 0:
+                # Winner: show their winnings
+                winners.append(f"🏆 **{user_name}**: Bet `{bet_amount}` → Won `{winnings}` (Net: +`{net_change}`)")
+            elif net_change == 0:
+                # Broke even (rare case)
+                winners.append(f"⚖️ **{user_name}**: Bet `{bet_amount}` → Broke even")
+            else:
+                # Loser: show their loss
+                losers.append(f"💸 **{user_name}**: Lost `{bet_amount}` coins")
+        
+        # Build the summary
+        summary_parts = []
+        
+        if winners:
+            if len(winners) == 1:
+                summary_parts.append("### 🎉 Winner")
+            else:
+                summary_parts.append("### 🎉 Winners")
+            summary_parts.extend(winners)
+        
+        if losers:
+            if winners:
+                summary_parts.append("")  # Add spacing
+            if len(losers) == 1:
+                summary_parts.append("### 💔 Unlucky Bettor")
+            else:
+                summary_parts.append("### 💔 Unlucky Bettors")
+            summary_parts.extend(losers)
+        
+        return "\n".join(summary_parts)
 
     # Re-implemented _process_winner_declaration logic
     async def _process_winner_declaration(
@@ -128,7 +384,6 @@ class Betting(commands.Cog):
     ) -> None:
         """Handles the logic for declaring a winner, distributing coins, and resetting the bet state."""
         contestants = data["betting"].get("contestants", {})
-        bets = data["betting"].get("bets", {})
 
         # Find the winner's ID (e.g., "1" or "2") based on name
         winner_id: Optional[str] = None
@@ -146,56 +401,83 @@ class Betting(commands.Cog):
             )
             return
 
-        total_pot = sum(bet["amount"] for bet in bets.values())
-        winning_bets = {
-            uid: bet
-            for uid, bet in bets.items()
-            if bet["choice"] == winner_name.lower()
-        }
-        total_winning_bet_amount = sum(bet["amount"] for bet in winning_bets.values())
-
-        if total_winning_bet_amount == 0:
-            # No one bet on the winner, pot is lost
-            await self._send_embed(
-                ctx,
-                TITLE_POT_LOST,
-                f"No one bet on **{winner_name}**. The entire pot of `{total_pot}` coins is lost!",
-                COLOR_WARNING,
+        # Calculate statistics BEFORE processing winner (which clears bet data)
+        total_bettors = len(data["betting"]["bets"])
+        total_pot = sum(bet["amount"] for bet in data["betting"]["bets"].values())
+        bets_on_winner = sum(1 for bet in data["betting"]["bets"].values() 
+                           if bet["choice"].lower() == winner_name.lower())
+        
+        # Process winner through BetState
+        winner_info = self.bet_state.declare_winner(winner_name)
+        
+        # Log winner declaration
+        logger.info(f"Winner declared: {winner_name} - Total pot: {total_pot} coins, {total_bettors} bettors")
+        performance_monitor.record_metric('betting.winner_declared', 1, {
+            'winner': winner_name,
+            'total_pot': str(total_pot),
+            'total_bettors': str(total_bettors)
+        })
+        
+        # Get user names for detailed payout message
+        user_names = {}
+        for user_id in winner_info["user_results"].keys():
+            try:
+                user = await self.bot.fetch_user(int(user_id))
+                user_names[user_id] = user.display_name
+            except (discord.NotFound, ValueError):
+                user_names[user_id] = f"Unknown User ({user_id})"
+            except Exception:
+                user_names[user_id] = f"User ({user_id})"
+        
+        # Create detailed payout summary
+        payout_details = await self._create_payout_summary(winner_info, user_names)
+        
+        # Send comprehensive results message
+        if bets_on_winner == 0:
+            # No one bet on the winner
+            embed_title = "💸 Round Complete - House Wins!"
+            embed_description = (
+                f"**{winner_name}** wins the contest!\n\n"
+                f"� **Round Summary:**\n"
+                f"• Total Pot: `{total_pot}` coins\n"
+                f"• Total Players: `{total_bettors}`\n"
+                f"• Bets on Winner: `0`\n"
+                f"• Result: All coins lost to the house\n\n"
+                f"{payout_details}"
             )
-            winnings_info = {}
+            embed_color = COLOR_WARNING
         else:
-            winnings_info = {}
-            for user_id, bet_info in winning_bets.items():
-                winnings = int(
-                    (bet_info["amount"] / total_winning_bet_amount) * total_pot
+            # Someone bet on the winner
+            embed_title = f"🏆 Round Complete - {winner_name} Wins!"
+            if bets_on_winner == 1:
+                embed_description = (
+                    f"**{winner_name}** wins the contest!\n\n"
+                    f"📊 **Round Summary:**\n"
+                    f"• Total Pot: `{total_pot}` coins\n"
+                    f"• Total Players: `{total_bettors}`\n"
+                    f"• Winner Takes All: `{total_pot}` coins\n\n"
+                    f"{payout_details}"
                 )
-                data["balances"][user_id] += winnings
-                winnings_info[user_id] = winnings
+            else:
+                embed_description = (
+                    f"**{winner_name}** wins the contest!\n\n"
+                    f"📊 **Round Summary:**\n"
+                    f"• Total Pot: `{total_pot}` coins\n"
+                    f"• Total Players: `{total_bettors}`\n"
+                    f"• Winners: `{bets_on_winner}` players\n"
+                    f"• Pot Shared Among Winners\n\n"
+                    f"{payout_details}"
+                )
+            embed_color = COLOR_SUCCESS
+        
+        await self._send_embed(ctx, embed_title, embed_description, embed_color)
 
-            await self._send_embed(
-                ctx,
-                TITLE_BETTING_ROUND_OPENED,
-                f"**{winner_name}** wins! `{total_pot}` coins distributed among `{len(winning_bets)}` winners.",
-                COLOR_SUCCESS,
-            )
-
-        # Clear betting state
-        data["betting"] = {
-            "open": False,
-            "locked": False,
-            "bets": {},
-            "contestants": {},
-        }
-        self._clear_timer_state_in_data(data)
-        save_data(data)
-
-        # Update live message to show final results
+        # Update live message with detailed results
         await update_live_message(
             self.bot,
             data,
             winner_declared=True,
-            winner_name=winner_name,
-            winnings_info=winnings_info,
+            winner_info=winner_info
         )
 
     # END _process_winner_declaration
@@ -204,57 +486,22 @@ class Betting(commands.Cog):
 
     def _cancel_bet_timer(self):
         """Cancels the active betting timer task if it exists and clears its data."""
-        if self.bet_timer_task and not self.bet_timer_task.done():
-            self.bet_timer_task.cancel()
-            self.bet_timer_task = None
-            print("Betting timer cancelled.")
-
+        self.timer.cancel_timer()
+        
         data = load_data()
         if data.get("timer_end_time") is not None:
             self._clear_timer_state_in_data(data)
+    
+    async def _handle_timer_expired(self, ctx: commands.Context):
+        """Handle when the betting timer expires."""
+        await self._lock_bets_internal(ctx, timer_expired=True)
 
-    async def _run_bet_timer(self, ctx: commands.Context, total_duration: int):
-        """Manages the countdown and automatically locks bets."""
-        data = load_data()
-        end_time = data.get("timer_end_time")
-        if end_time is None:  # Fallback if not set, though openbet should set it
-            end_time = self.bot.loop.time() + total_duration
-            data["timer_end_time"] = end_time
-            save_data(data)
-
-        try:
-            while True:
-                current_time = self.bot.loop.time()
-                remaining_time = int(end_time - current_time)
-                if remaining_time <= 0:
-                    break
-
-                data = load_data()
-                if not data["betting"]["open"]:
-                    print("Timer detected bet is no longer open, stopping.")
-                    break
-
-                # Call update_live_message without remaining_time/total_duration, it will calculate internally
-                await update_live_message(self.bot, data, current_time=current_time)
-                await asyncio.sleep(BET_TIMER_UPDATE_INTERVAL)
-
-            data = load_data()
-            if data["betting"]["open"]:
-                print("Timer expired, attempting to lock bets...")
-                await self._lock_bets_internal(ctx, timer_expired=True)
-
-        except asyncio.CancelledError:
-            print("Betting timer task was cancelled.")
-        except Exception as e:
-            print(f"Error in bet timer: {e}")
-        finally:
-            self.bet_timer_task = None
-            data = load_data()
-            if data.get("timer_end_time") is not None:
-                self._clear_timer_state_in_data(data)
 
     async def _lock_bets_internal(
-        self, ctx: commands.Context, timer_expired: bool = False
+        self,
+        ctx: commands.Context,
+        timer_expired: bool = False,
+        silent_lock: bool = False,
     ) -> None:
         """Internal logic to lock bets, callable by command or timer."""
         data = load_data()
@@ -308,34 +555,48 @@ class Betting(commands.Cog):
         await update_live_message(
             self.bot, data, betting_closed=True, close_summary=lock_summary
         )
-        await self._send_embed(ctx, TITLE_BETS_LOCKED, lock_summary, COLOR_DARK_ORANGE)
+        if not silent_lock:  # Only send the locked message if not a silent lock
+            await self._send_embed(
+                ctx, TITLE_BETS_LOCKED, lock_summary, COLOR_DARK_ORANGE
+            )
 
     # --- Discord Commands ---
 
     @commands.command(name="openbet", aliases=["ob"])
-    async def openbet(self, ctx: commands.Context, name1: str, name2: str) -> None:
+    async def openbet(self, ctx: commands.Context, name1: Optional[str] = None, name2: Optional[str] = None) -> None:
         data = load_data()
 
-        # Check if the user has the required role
-        # ctx.author can be discord.User (in DMs) or discord.Member (in guilds)
-        # Only discord.Member has the 'roles' attribute.
-        if not isinstance(ctx.author, discord.Member):
-            await self._send_embed(
-                ctx,
-                TITLE_BETTING_ERROR,
-                "This command can only be used in a server channel.",
-                COLOR_ERROR,
-            )
+        if not await self._check_permission(ctx, "open betting rounds"):
             return
 
-        required_role = discord.utils.get(ctx.author.roles, name=ROLE_BETBOY)
-
-        if required_role is None:
+        # Check if both contestant names are provided and not empty
+        if name1 is None or name2 is None or not name1.strip() or not name2.strip():
+            await self._send_embed(
+                ctx, TITLE_BETTING_ERROR, MSG_INVALID_OPENBET_FORMAT, COLOR_ERROR
+            )
+            return
+        
+        # Clean up the names by stripping whitespace
+        name1 = name1.strip()
+        name2 = name2.strip()
+        
+        # Check if contestant names are identical (case-insensitive)
+        if name1.lower() == name2.lower():
+            await self._send_embed(
+                ctx, 
+                TITLE_BETTING_ERROR, 
+                "**Contestant names cannot be identical.**\nPlease provide two different contestant names.\nExample: `!openbet Alice Bob`", 
+                COLOR_ERROR
+            )
+            return
+            
+        # Check if contestant names are too long (Discord embed field limit considerations)
+        if len(name1) > 50 or len(name2) > 50:
             await self._send_embed(
                 ctx,
                 TITLE_BETTING_ERROR,
-                f"You need the '{ROLE_BETBOY}' role to open betting rounds.",
-                COLOR_ERROR,
+                "**Contestant names are too long.**\nPlease keep contestant names under 50 characters each.\nExample: `!openbet Alice Bob`",
+                COLOR_ERROR
             )
             return
 
@@ -360,10 +621,17 @@ class Betting(commands.Cog):
             "contestants": {"1": name1, "2": name2},
         }
         if data["settings"]["enable_bet_timer"]:
-            data["timer_end_time"] = self.bot.loop.time() + BET_TIMER_DURATION
+            data["timer_end_time"] = time.time() + BET_TIMER_DURATION
         else:
             data["timer_end_time"] = None
         save_data(data)
+
+        # Log betting round opened
+        logger.info(f"Betting round opened: {name1} vs {name2} by user {ctx.author}")
+        performance_monitor.record_metric('betting.round_opened', 1, {
+            'contestant1': name1,
+            'contestant2': name2
+        })
 
         main_chan_id = get_saved_bet_channel_id(data)
         target_channel: Optional[discord.TextChannel] = None
@@ -419,7 +687,8 @@ class Betting(commands.Cog):
             return
 
         if main_live_msg:
-            await self._add_betting_reactions(main_live_msg, data)
+            # Add reactions in the background to avoid blocking the betting round opening
+            self._add_reactions_background(main_live_msg, data)
 
         # Only send a secondary message if ctx.channel is a TextChannel and different from target_channel
         if (
@@ -461,29 +730,24 @@ class Betting(commands.Cog):
                     f"Betting round opened for **{name1}** vs **{name2}**! Use `!lockbets` to close.",
                     COLOR_SUCCESS,
                 )
-        else:
-            # Send a brief confirmation if opened in the set bet channel
-            await self._send_embed(
-                ctx,
-                "✅ Betting Round Opened",
-                f"Betting round for **{name1}** vs **{name2}** started in this channel.",
-                COLOR_SUCCESS,
-            )
+        # If opened in the set bet channel, no additional message needed - live message provides all info
 
         # Schedule the betting timer if enabled (moved here, after live message is set up)
         if data["settings"]["enable_bet_timer"]:
-            self.bet_timer_task = self.bot.loop.create_task(
-                self._run_bet_timer(ctx, BET_TIMER_DURATION)
-            )
+            await self.timer.start_timer(ctx, BET_TIMER_DURATION, self._handle_timer_expired)
 
     @commands.command(name="lockbets", aliases=["lb"])
-    @commands.has_permissions(manage_guild=True)
     async def lock_bets(self, ctx: commands.Context) -> None:
+        if not await self._check_permission(ctx, "close betting rounds"):
+            return
+
         await self._lock_bets_internal(ctx)
 
     @commands.command(name="declarewinner", aliases=["dw"])
-    @commands.has_permissions(manage_guild=True)
     async def declare_winner(self, ctx: commands.Context, winner: str) -> None:
+        if not await self._check_permission(ctx, "declare winners"):
+            return
+
         data = load_data()
         if not data["betting"]["locked"]:
             await self._send_embed(
@@ -495,9 +759,11 @@ class Betting(commands.Cog):
         await self._process_winner_declaration(ctx, data, winner)  # Updated call
 
     @commands.command(name="closebet", aliases=["cb"])
-    @commands.has_permissions(manage_guild=True)
     async def close_bet(self, ctx: commands.Context, winner: str) -> None:
         data = load_data()
+
+        if not await self._check_permission(ctx, "close betting rounds"):
+            return
         if not data["betting"]["open"] and not data["betting"]["locked"]:
             await self._send_embed(
                 ctx, TITLE_CANNOT_CLOSE_BETS, MSG_NO_BETS_TO_CLOSE, COLOR_ERROR
@@ -506,9 +772,9 @@ class Betting(commands.Cog):
 
         if data["betting"]["open"]:
             await self._lock_bets_internal(
-                ctx
-            )  # This will set data["betting"]["locked"] = True
-            data = load_data()  # Reload data after locking
+                ctx, silent_lock=True
+            )  # This will set data["betting"]["locked"] = True, silently
+        data = load_data()  # Reload data after locking
 
         self._cancel_bet_timer()
         await self._process_winner_declaration(ctx, data, winner)  # Updated call
@@ -543,13 +809,23 @@ class Betting(commands.Cog):
         )
 
     @commands.command(name="togglebettimer", aliases=["tbt"])
-    @commands.has_permissions(manage_guild=True)
     async def toggle_bet_timer(self, ctx: commands.Context) -> None:
+        if not await self._check_permission(ctx, "toggle betting timer"):
+            return
+            
         data = load_data()
         data["settings"]["enable_bet_timer"] = not data["settings"]["enable_bet_timer"]
         save_data(data)
 
         status = "enabled" if data["settings"]["enable_bet_timer"] else "disabled"
+        
+        # Log timer toggle
+        logger.info(f"Betting timer {status} by user {ctx.author}")
+        performance_monitor.record_metric('betting.timer_toggled', 1, {
+            'status': status,
+            'user': str(ctx.author)
+        })
+        
         await self._send_embed(
             ctx,
             TITLE_TIMER_TOGGLED,
@@ -589,6 +865,22 @@ class Betting(commands.Cog):
                     ),
                     COLOR_INFO,
                 )
+            elif data["betting"]["locked"]:
+                # Betting is locked - provide specific message with live link
+                live_message_link = get_live_message_link(
+                    self.bot, data, True  # Show live message link since bets are locked
+                )
+                if live_message_link:
+                    await self._send_embed(
+                        ctx, 
+                        TITLE_BETTING_ERROR, 
+                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(live_link=live_message_link), 
+                        COLOR_ERROR
+                    )
+                else:
+                    await self._send_embed(
+                        ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
+                    )
             else:
                 await self._send_embed(
                     ctx, TITLE_NO_OPEN_BETTING_ROUND, MSG_NO_ACTIVE_BET, COLOR_ERROR
@@ -657,42 +949,85 @@ class Betting(commands.Cog):
 
         contestant_info = self._find_contestant_info(data, choice)
         if not contestant_info:
+            # Generate helpful error message with available contestants
+            contestants = data["betting"].get("contestants", {})
+            if contestants:
+                contestants_list = "\n".join([f"• **{name}**" for name in contestants.values()])
+                example_contestant = list(contestants.values())[0]
+                error_msg = MSG_UNKNOWN_CONTESTANT.format(
+                    contestant_name=choice,
+                    contestants_list=contestants_list,
+                    example_contestant=example_contestant
+                )
+            else:
+                error_msg = "No betting round is currently active."
+            
             await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_INVALID_BET_FORMAT, COLOR_ERROR
+                ctx, TITLE_BETTING_ERROR, error_msg, COLOR_ERROR
             )
             return
 
         contestant_id, contestant_name = contestant_info
 
-        # Deduct the bet amount from the user's balance
-        user_balance = data["balances"][str(ctx.author.id)]
-        if amount > user_balance:
+        # Check if user is changing an existing bet
+        user_id_str = str(ctx.author.id)
+        existing_bet = data["betting"]["bets"].get(user_id_str)
+        old_contestant = existing_bet.get("choice") if existing_bet else None
+        old_amount = existing_bet.get("amount", 0) if existing_bet else 0
+
+        # Use BetState for proper balance validation (accounts for existing bet refunds)
+        bet_state = BetState(data)
+        user_balance = bet_state.economy.get_balance(user_id_str)
+        required_additional = amount - old_amount
+
+        if required_additional > user_balance:
+            current_bet_info = f" You currently have `{old_amount}` coins bet on **{old_contestant}**." if existing_bet else ""
             await self._send_embed(
                 ctx,
                 TITLE_BETTING_ERROR,
-                f"Insufficient balance! Your current balance is `{user_balance}` coins.",
+                f"Insufficient balance! You need `{required_additional}` additional coins but only have `{user_balance}` available.{current_bet_info}",
                 COLOR_ERROR,
             )
             return
 
-        # Place the bet
-        data["betting"]["bets"][str(ctx.author.id)] = {
-            "amount": amount,
-            "choice": contestant_name.lower(),
-            "emoji": None,  # Manual bets do not have an associated emoji
-        }
-        data["balances"][str(ctx.author.id)] -= amount
-        save_data(data)
-
-        # Update the live message with the new bet
-        await update_live_message(self.bot, data)
-
-        await self._send_embed(
-            ctx,
-            TITLE_BET_PLACED,
-            f"Your bet of `{amount}` coins on **{contestant_name}** has been placed!",
-            COLOR_SUCCESS,
+        # Place the bet using centralized logic
+        channel = ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None
+        
+        # Determine if this is a bet change for messaging
+        is_bet_change = existing_bet and old_contestant and old_contestant.lower() != contestant_name.lower()
+        
+        success = await self._process_bet(
+            channel, data, user_id_str, amount, contestant_name, notify_user=False
         )
+        
+        if success:
+            # Send appropriate success message
+            if is_bet_change:
+                await self._send_embed(
+                    ctx,
+                    TITLE_BET_PLACED,
+                    MSG_BET_CHANGED.format(
+                        user_id=ctx.author.id,
+                        amount=amount,
+                        old_contestant=old_contestant,
+                        new_contestant=contestant_name
+                    ),
+                    COLOR_SUCCESS,
+                )
+            else:
+                await self._send_embed(
+                    ctx,
+                    TITLE_BET_PLACED,
+                    f"Your bet of `{amount}` coins on **{contestant_name}** has been placed!",
+                    COLOR_SUCCESS,
+                )
+        else:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "Failed to place bet. Please try again.",
+                COLOR_ERROR,
+            )
 
     @place_bet.error
     async def place_bet_error(
@@ -905,6 +1240,38 @@ class Betting(commands.Cog):
         debug_info = f"Betting Open: {data['betting']['open']}\nBets Locked: {data['betting']['locked']}\nTotal Bets: {len(data['betting']['bets'])}"
         await ctx.send(f"```\n{debug_info}\n```")
 
+    @commands.command(name="forceclose", aliases=["fc"])
+    async def force_close_betting(self, ctx: commands.Context) -> None:
+        """Force close/reset betting state - use when betting is stuck."""
+        if not await self._check_permission(ctx, "force close betting"):
+            return
+            
+        data = load_data()
+        
+        # Reset betting state
+        data["betting"] = {
+            "open": False,
+            "locked": False,
+            "bets": {},
+            "contestants": {}
+        }
+        
+        # Clear live messages
+        data["live_message"] = None
+        data["live_channel"] = None
+        data["live_secondary_message"] = None
+        data["live_secondary_channel"] = None
+        data["timer_end_time"] = None
+        
+        save_data(data)
+        
+        await self._send_embed(
+            ctx, 
+            "🔧 Force Close Complete", 
+            "Betting state has been forcefully reset. You can now start a new round with `!openbet`.",
+            discord.Color.green()
+        )
+
     @commands.Cog.listener()
     async def on_raw_reaction_add(
         self, payload: discord.RawReactionActionEvent
@@ -960,6 +1327,11 @@ class Betting(commands.Cog):
             print(f"Error fetching message or user for reaction: {e}")
             return
 
+        # Remove any existing reactions from this user except the new one
+        await self._remove_user_betting_reactions(
+            message, user, data, exclude_emoji=str(payload.emoji)
+        )
+
         # Determine contestant from emoji
         contestant_id = _get_contestant_from_emoji(data, str(payload.emoji))
         if not contestant_id:
@@ -1000,57 +1372,21 @@ class Betting(commands.Cog):
         user_id_str = str(user.id)
         previous_bet_info = data["betting"]["bets"].get(user_id_str)
 
-        if previous_bet_info:
-            # Refund previous bet and remove old reaction
-            previous_amount = previous_bet_info["amount"]
-            previous_emoji = previous_bet_info.get(
-                "emoji"
-            )  # Get the emoji from the stored bet
-            old_contestant_name = previous_bet_info["choice"]
-            data["balances"][user_id_str] += previous_amount
+        success = await self._process_bet(
+            channel=channel if isinstance(channel, discord.TextChannel) else None,
+            data=data,
+            user_id=user_id_str,
+            amount=bet_amount,
+            choice=contestant_name,
+            emoji=str(payload.emoji),
+            notify_user=False,  # Don't send notification messages for reaction bets
+        )
 
-            if previous_emoji:
-                try:
-                    await message.remove_reaction(previous_emoji, user)
-                except discord.NotFound:
-                    pass  # Reaction already removed
-                except discord.HTTPException as e:
-                    print(
-                        f"Error removing previous reaction {previous_emoji} from user {user.name}: {e}"
-                    )
-
-            # Send bet changed message
-            channel = self.bot.get_channel(payload.channel_id)
-            if isinstance(channel, discord.TextChannel):
-                embed = discord.Embed(
-                    title="🔄 Bet Changed",
-                    description=MSG_BET_CHANGED.format(
-                        user_id=user.id,
-                        amount=bet_amount,
-                        old_contestant=old_contestant_name.capitalize(),
-                        new_contestant=contestant_name.capitalize(),
-                    ),
-                    color=COLOR_INFO,
-                )
-                await channel.send(embed=embed)
-
-        data["balances"][user_id_str] -= bet_amount
-        data["betting"]["bets"][user_id_str] = {
-            "amount": bet_amount,
-            "choice": contestant_name.lower(),
-            "emoji": str(payload.emoji),  # Store the emoji used for this bet
-        }
-        save_data(data)
-
-        # No longer remove user's reaction here, it stays to indicate active bet
-        # await self._remove_user_betting_reactions(message, user, data)
-
-        # Update live message
-        await update_live_message(self.bot, data, current_time=self.bot.loop.time())
-
-        # No direct message, just update live message
-        # embed = discord.Embed(title=TITLE_BET_PLACED, description=f"<@{user.id}>, your bet of `{bet_amount}` coins on **{contestant_name}** has been placed via reaction!", color=COLOR_SUCCESS)
-        # await channel.send(embed=embed)
+        if not success:
+            # If bet failed, remove the reaction
+            await message.remove_reaction(payload.emoji, user)
+            
+        # Live message update is handled by _process_bet
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(
@@ -1101,20 +1437,12 @@ class Betting(commands.Cog):
             contestant_name = data["betting"]["contestants"].get(contestant_id)
 
             if contestant_name and bet_info["choice"] == contestant_name.lower():
-                # User is removing a bet they previously placed with this emoji
+                # When removing a bet, just process the refund and cleanup
                 refund_amount = bet_info["amount"]
                 data["balances"][user_id_str] += refund_amount
                 del data["betting"]["bets"][user_id_str]
                 save_data(data)
-
-                # Update live message
-                await update_live_message(self.bot, data)
-
-                # Inform user of successful unbet in the channel (removed as per instructions)
-                # channel = self.bot.get_channel(payload.channel_id)
-                # if isinstance(channel, discord.TextChannel):
-                #     embed = discord.Embed(title="✅ Bet Removed", description=f"<@{user.id}>, your bet of `{refund_amount}` coins on **{contestant_name}** has been removed.", color=COLOR_INFO)
-                #     await channel.send(embed=embed)
+                await update_live_message(self.bot, data)  # Update the display
 
 
 async def setup(bot: commands.Bot):
