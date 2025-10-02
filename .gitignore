@@ -12,5 +12,9 @@ venv/
 # Editor-specific files
 .vscode/
 
+# Logs
+logs/
+*.log
+
 # Discord Bot specific files
 data.json
