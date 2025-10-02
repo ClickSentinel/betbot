@@ -124,11 +124,10 @@ betbot/
 │   ├── betting.py          # Core betting commands
 │   ├── economy.py          # Balance management
 │   └── help.py             # Help system
-├── utils/                   # Business logic (9 modules)
+├── utils/                   # Business logic (8 modules)
 │   ├── bet_state.py        # State management + type definitions
 │   ├── betting_timer.py    # Timer system
 │   ├── betting_utils.py    # Permissions & utilities
-│   ├── bet_ui.py           # UI components
 │   ├── live_message.py     # Message updates + state conversion
 │   ├── message_formatter.py # UI formatting
 │   ├── logger.py           # Logging system
