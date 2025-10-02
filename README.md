@@ -54,9 +54,10 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 ### 👤 User Commands
 | Command | Alias | Description | Example |
 |---------|-------|-------------|---------|
-| `!balance` | `!bal` | Check your coin balance | `!balance` |
+| `!balance` | `!bal` | Check your coin balance & active bets | `!balance` |
 | `!bet <contestant> <amount>` | `!b` | Place a bet on contestant | `!bet Alice 100` |
-| `!mybet` | `!mb` | View your current bet | `!mybet` |
+| `!betall <contestant>` | `!allin` | **NEW:** Bet all your coins | `!betall Alice` |
+| `!mybet` | `!mb` | View your current bet & status | `!mybet` |
 | `!bettinginfo` | `!bi` | Display round information | `!bettinginfo` |
 | `!help` | `!h` | Show user help | `!help` |
 
@@ -90,10 +91,26 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 - **Contestant 2** (Excellence/Royalty): 🌟 100 💎 250 🚀 500 👑 1000
 
 **Features**:
-- Click emoji to bet → Instant confirmation
-- Click different emoji to change bet → Automatic refund
+- Click emoji to bet → Instant confirmation with balance warnings
+- Click different emoji to change bet → Rich before/after confirmation
 - Remove reaction to cancel bet → Full refund
 - Manual commands automatically remove reaction bets
+
+## ✨ Enhanced User Experience
+
+**Smart Betting Features**:
+- **All-in Commands**: `!betall Alice` or `!allin Alice` to bet all your coins
+- **Typo-Resistant**: 'alice', 'ALICE', 'Ali' all work for 'Alice'
+- **Balance Warnings**: Alerts when betting 70%+ of your balance (non-blocking)
+- **Rich Error Messages**: Clear breakdown of balance vs required amount
+- **Bet Change Confirmation**: See before/after with net change calculation
+- **Enhanced Status**: `!mybet` and `!balance` show comprehensive betting context
+
+**Improved Messaging**:
+- Context-aware error messages with helpful suggestions
+- Locked vs no-round distinction in command responses
+- Live message links in informational commands
+- Detailed winner payouts with individual user breakdowns
 
 ## ⚡ Performance Features
 
@@ -103,7 +120,7 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 
 ### Testing
 ```bash
-# Run all tests (51 passing)
+# Run all tests (58 passing)
 python -m pytest
 
 # Run specific test modules
@@ -133,7 +150,7 @@ betbot/
 │   ├── logger.py           # Logging system
 │   ├── error_handler.py    # Error management
 │   └── performance_monitor.py # System monitoring
-└── tests/                   # Test suite (51 tests)
+└── tests/                   # Test suite (58 tests)
 ```
 
 ## 🔒 Permission System

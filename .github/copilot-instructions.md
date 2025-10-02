@@ -69,10 +69,11 @@ betbot/
 - `!togglebettimer` - Enable/disable 90s auto-timer
 
 **User Commands**:
-- `!bet <amount> <choice>` - Place manual bet
+- `!bet <amount> <choice>` - Place manual bet with enhanced UX
+- `!betall <choice>` / `!allin <choice>` - Bet all coins
 - Reaction betting - Click emoji to bet preset amounts
-- `!mybet` - Check current bet
-- `!balance` - Check coin balance
+- `!mybet` - Check current bet with comprehensive status
+- `!balance` - Check coin balance with active bet context
 
 ## 🎮 Reaction Betting System
 
@@ -81,6 +82,7 @@ betbot/
 - **One Bet Per User**: New reaction replaces previous bet automatically
 - **Visual Feedback**: User's active reaction stays visible
 - **Batched Updates**: Live message updates every 5 seconds via `LiveMessageScheduler`
+- **Enhanced UX**: Balance warnings, rich confirmations, typo-resistant commands
 
 ### Event Handling (`cogs/betting.py`)
 - **Listeners**: `on_raw_reaction_add` / `on_raw_reaction_remove`
@@ -129,12 +131,14 @@ betbot/
 - **Timer updates only at 5s/0s intervals** for performance
 - **Reaction betting uses preset amounts** from `REACTION_BET_AMOUNTS`
 - **All state changes go through `data_manager.save_data()`**
+- **Enhanced UX**: Balance warnings, typo-resistant matching, rich error messages
+- **Smart features**: `!betall` command, improved bet change confirmations
 
 ## 📋 Quick Reference
 
 ### Development Commands
 ```bash
-python -m pytest                    # Run all 58 tests
+python -m pytest                   # Run all 58 tests
 python bot.py                      # Start the bot
 python watcher.py                  # Development file watcher
 ```

@@ -10,9 +10,10 @@ This deployment guide covers the latest enhancements including:
 - **Enhanced Timer System**: 90-second timer with selective updates
 - **Themed Emoji System**: Power/Victory vs Excellence/Royalty themes
 - **Batched Live Updates**: 5-second intelligent batching reduces API calls by 80%
-- **Improved User Experience**: Better error messages and visual formatting
+- **Smart Betting Features**: `!betall` command, typo-resistant contestant matching
+- **Enhanced UX**: Rich error messages, balance warnings, bet change confirmations
 - **Rate Limiting Protection**: Advanced Discord API optimization
-- **Comprehensive Testing**: 51 automated tests ensure reliability
+- **Comprehensive Testing**: 58 automated tests ensure reliability
 
 ## Setup Steps
 
