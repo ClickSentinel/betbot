@@ -483,6 +483,9 @@ class Betting(commands.Cog):
             winner_declared=True,
             winner_info=winner_info
         )
+        
+        # Also schedule batched update for consistency and any pending changes
+        schedule_live_message_update()
 
     # END _process_winner_declaration
 
