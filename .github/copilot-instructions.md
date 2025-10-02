@@ -19,14 +19,12 @@ betbot/
 │   ├── economy.py           # Balance and economy commands
 │   └── help.py              # Help system
 ├── utils/                    # Core architectural components
-│   ├── bet_state.py         # State management system
+│   ├── bet_state.py         # State management system + type definitions
 │   ├── betting_timer.py     # Timer management (extracted)
 │   ├── betting_utils.py     # Permissions & utilities (extracted)  
 │   ├── bet_ui.py            # UI components and formatting
 │   ├── message_formatter.py # UI formatting system
-│   ├── message_types.py     # Type definitions
-│   ├── state_converter.py   # Type-safe data conversions
-│   ├── live_message.py      # Message coordination
+│   ├── live_message.py      # Message coordination + state conversion
 │   ├── logger.py            # Structured logging system
 │   ├── error_handler.py     # Comprehensive error handling
 │   └── performance_monitor.py # System monitoring
@@ -48,8 +46,8 @@ The codebase follows a **modular architecture** with clear separation of concern
 ### State Management
 - **Primary**: `BetState` from `utils/bet_state.py` handles all betting operations
 - **Persistence**: All changes go through `data_manager.save_data()`
-- **Type Safety**: Definitions in `utils/message_types.py`
-- **Conversions**: Type-safe data flow via `utils/state_converter.py`
+- **Type Safety**: TypedDict definitions integrated into `utils/bet_state.py`
+- **Conversions**: State conversion utilities integrated into `utils/live_message.py`
 
 ### Enhanced Timer System (UPDATED - October 2025)
 - **`utils/betting_timer.py`**: Sophisticated timer with selective updates
@@ -98,7 +96,7 @@ The codebase follows a **modular architecture** with clear separation of concern
 - **Business Logic**: `BetState.open_betting_round()` in `utils/bet_state.py`
 - **UI Generation**: `MessageFormatter.create_live_message_embed()`
 - **Timer**: `BettingTimer.start_timer()` if timer enabled
-- **State**: Managed through `state_converter.convert_to_betting_session()`
+- **State**: Managed through `live_message.convert_to_betting_session()`
 
 ### 2. User Betting
 **Manual Betting (`!bet`)**:
