@@ -202,7 +202,7 @@ class TestBetting:
         # Assert - Should use bet change message
         betting_cog._send_embed.assert_called()
         call_args = betting_cog._send_embed.call_args
-        assert "changed from" in call_args[0][2]  # Description contains "changed from"
+        assert "has been updated" in call_args[0][2]  # Description contains "has been updated"
         assert "alice" in call_args[0][2] and "Bob" in call_args[0][2]  # Note: stored choice is lowercase
         
         # Verify bet was updated
@@ -264,8 +264,8 @@ class TestBetting:
         betting_cog._send_embed.assert_called()
         call_args = betting_cog._send_embed.call_args
         error_message = call_args[0][2]
-        assert "additional coins" in error_message
-        assert "currently have" in error_message
+        assert "Additional needed" in error_message
+        assert "Current bet" in error_message
         assert "300" in error_message  # Shows current bet amount
 
     async def test_bet_no_params_locked(self, betting_cog, mock_ctx, test_data):

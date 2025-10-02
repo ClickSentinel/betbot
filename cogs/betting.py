@@ -56,6 +56,7 @@ from config import (
     MSG_INVALID_OPENBET_FORMAT,
     MSG_BET_CHANGED,
     MSG_BET_LOCKED_WITH_LIVE_LINK,
+    TITLE_INSUFFICIENT_FUNDS,
 )
 from data_manager import load_data, save_data, ensure_user, Data
 from utils.live_message import (
@@ -97,6 +98,42 @@ class Betting(commands.Cog):
         """Sends a consistent embed message."""
         await BettingUtils.send_embed(ctx, title, description, color)
 
+    def _find_fuzzy_contestant(self, data: Data, input_name: str) -> Optional[Tuple[str, str]]:
+        """Find contestant with fuzzy matching for typo tolerance."""
+        contestants = data["betting"].get("contestants", {})
+        if not contestants:
+            return None
+            
+        input_lower = input_name.lower().strip()
+        
+        # First try exact match (case insensitive)
+        for contestant_id, name in contestants.items():
+            if name.lower() == input_lower:
+                return contestant_id, name
+        
+        # Then try partial match (starts with)
+        matches = []
+        for contestant_id, name in contestants.items():
+            if name.lower().startswith(input_lower):
+                matches.append((contestant_id, name))
+        
+        # If exactly one partial match, use it
+        if len(matches) == 1:
+            return matches[0]
+            
+        # Try contains match if no partial matches
+        if not matches:
+            for contestant_id, name in contestants.items():
+                if input_lower in name.lower():
+                    matches.append((contestant_id, name))
+                    
+        # If exactly one contains match, use it
+        if len(matches) == 1:
+            return matches[0]
+            
+        # No unique match found
+        return None
+
     def _clear_timer_state_in_data(self, data: Data) -> None:
         """Clears timer-related data. Note: Does not save data - caller must save."""
         data["timer_end_time"] = None
@@ -129,12 +166,25 @@ class Betting(commands.Cog):
                 )
             return False
 
+        # Balance warning for large bets (>= 70% of balance)
+        bet_percentage = (amount / user_balance) * 100 if user_balance > 0 else 0
+        if bet_percentage >= 70 and notify_user and channel:
+            warning_emoji = "🚨" if bet_percentage >= 90 else "⚠️"
+            await channel.send(
+                embed=discord.Embed(
+                    title=f"{warning_emoji} Large Bet Warning",
+                    description=f"💰 **Your balance:** `{user_balance}` coins\n💸 **Bet amount:** `{amount}` coins ({bet_percentage:.0f}% of balance)\n\n⚠️ This is a significant portion of your funds. Bet placed successfully!",
+                    color=COLOR_WARNING,
+                )
+            )
+
         if amount > user_balance:
             if notify_user and channel:
+                shortfall = amount - user_balance
                 await channel.send(
                     embed=discord.Embed(
-                        title=TITLE_BETTING_ERROR,
-                        description=f"Insufficient balance! Current balance is `{user_balance}` coins.",
+                        title="❌ Insufficient Funds",
+                        description=f"💰 **Your balance:** `{user_balance}` coins\n💸 **Bet amount:** `{amount}` coins\n❌ **You need:** `{shortfall}` more coins\n\n💡 *Tip: Use `!betall {choice}` to bet all your coins*",
                         color=COLOR_ERROR,
                     )
                 )
@@ -207,7 +257,13 @@ class Betting(commands.Cog):
     def _find_contestant_info(
         self, data: Data, choice_input: str
     ) -> Optional[Tuple[str, str]]:
-        """Finds a contestant ID and name based on partial input."""
+        """Finds a contestant ID and name based on fuzzy matching for typo tolerance."""
+        # Try fuzzy matching first
+        fuzzy_result = self._find_fuzzy_contestant(data, choice_input)
+        if fuzzy_result:
+            return fuzzy_result
+        
+        # Fall back to original method if no fuzzy match
         return BettingUtils.find_contestant_info(data, choice_input)
 
     async def _add_betting_reactions(
@@ -992,11 +1048,11 @@ class Betting(commands.Cog):
         required_additional = amount - old_amount
 
         if required_additional > user_balance:
-            current_bet_info = f" You currently have `{old_amount}` coins bet on **{old_contestant}**." if existing_bet else ""
+            current_bet_info = f"\n🎯 **Current bet:** `{old_amount}` coins on **{old_contestant}**" if existing_bet else ""
             await self._send_embed(
                 ctx,
-                TITLE_BETTING_ERROR,
-                f"Insufficient balance! You need `{required_additional}` additional coins but only have `{user_balance}` available.{current_bet_info}",
+                "❌ Insufficient Funds",
+                f"💰 **Your balance:** `{user_balance}` coins\n💸 **Additional needed:** `{required_additional}` coins\n❌ **Total required:** `{amount}` coins{current_bet_info}\n\n💡 *Tip: Use `!betall {contestant_name}` to bet all your coins*",
                 COLOR_ERROR,
             )
             return
@@ -1014,15 +1070,15 @@ class Betting(commands.Cog):
         if success:
             # Send appropriate success message
             if is_bet_change:
+                amount_change = amount - old_amount
+                change_indicator = f" (net change: {'+'if amount_change > 0 else ''}{amount_change} coins)" if amount_change != 0 else ""
                 await self._send_embed(
                     ctx,
-                    TITLE_BET_PLACED,
-                    MSG_BET_CHANGED.format(
-                        user_id=ctx.author.id,
-                        amount=amount,
-                        old_contestant=old_contestant,
-                        new_contestant=contestant_name
-                    ),
+                    "🔄 Bet Changed",
+                    f"<@{ctx.author.id}>, your bet has been updated!\n\n"
+                    f"**Before:** `{old_amount}` coins on **{old_contestant}**\n"
+                    f"**After:** `{amount}` coins on **{contestant_name}**{change_indicator}\n\n"
+                    f"🎯 Good luck with your new choice!",
                     COLOR_SUCCESS,
                 )
             else:
@@ -1075,13 +1131,96 @@ class Betting(commands.Cog):
                 COLOR_ERROR,
             )
 
+    @commands.command(name="betall", aliases=["allin"])
+    async def bet_all(self, ctx: commands.Context, *, contestant: Optional[str] = None) -> None:
+        """Bet all coins on a contestant."""
+        data = load_data()
+        
+        # Check if betting is open
+        if not data["betting"]["open"]:
+            if data["betting"]["locked"]:
+                live_message_link = get_live_message_link(self.bot, data, True)
+                if live_message_link:
+                    await self._send_embed(
+                        ctx, 
+                        TITLE_BETTING_ERROR, 
+                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(live_link=live_message_link), 
+                        COLOR_ERROR
+                    )
+                else:
+                    await self._send_embed(
+                        ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
+                    )
+            else:
+                await self._send_embed(
+                    ctx, TITLE_NO_OPEN_BETTING_ROUND, MSG_NO_ACTIVE_BET, COLOR_ERROR
+                )
+            return
+
+        # Handle missing contestant parameter
+        if not contestant:
+            contestants = data["betting"].get("contestants", {})
+            await self._send_embed(
+                ctx,
+                TITLE_INVALID_BET_FORMAT,
+                f"**Missing contestant name.**\nUse `!betall <contestant>` to bet all your coins.\n\n**Available contestants:**\n{', '.join(contestants.values())}\n\n**Example:** `!betall {list(contestants.values())[0] if contestants.values() else 'Alice'}`",
+                COLOR_ERROR,
+            )
+            return
+
+        # Ensure user exists and get balance  
+        ensure_user(data, str(ctx.author.id))
+        user_data = data.get("users", {}).get(str(ctx.author.id), {})
+        user_balance = user_data.get("balance", 0)
+        
+        if user_balance <= 0:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                f"❌ You have no coins to bet! Your current balance is `{user_balance}` coins.",
+                COLOR_ERROR,
+            )
+            return
+
+        # Use existing bet processing logic with all coins
+        channel = ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None
+        success = await self._process_bet(
+            channel, data, str(ctx.author.id), user_balance, contestant, None, True
+        )
+        
+        if success:
+            save_data(data)
+            schedule_live_message_update()
+            await self._send_embed(
+                ctx,
+                TITLE_BET_PLACED,
+                f"🎰 **All-in bet placed!**\n\n💰 **Amount:** `{user_balance}` coins (all your coins)\n🎯 **Choice:** **{contestant}**\n\n🔥 Good luck!",
+                COLOR_SUCCESS,
+            )
+
     @commands.command(name="mybet", aliases=["mb"])
     async def mybet(self, ctx: commands.Context) -> None:
         data = load_data()
         if not data["betting"]["open"]:
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_NO_ACTIVE_BET, COLOR_ERROR
-            )
+            if data["betting"]["locked"]:
+                # Betting round exists but is locked
+                live_message_link = get_live_message_link(self.bot, data, True)
+                if live_message_link:
+                    await self._send_embed(
+                        ctx, 
+                        TITLE_BETTING_ERROR, 
+                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(live_link=live_message_link), 
+                        COLOR_ERROR
+                    )
+                else:
+                    await self._send_embed(
+                        ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
+                    )
+            else:
+                # No betting round at all
+                await self._send_embed(
+                    ctx, TITLE_BETTING_ERROR, MSG_NO_ACTIVE_BET, COLOR_ERROR
+                )
             return
 
         # Ensure the user has an account
@@ -1099,11 +1238,38 @@ class Betting(commands.Cog):
 
         contestant_info = self._find_contestant_info(data, user_bet["choice"])
         contestant_name = contestant_info[1] if contestant_info else "Unknown"
+        
+        # Get user's current balance for context
+        user_balance = data.get("balances", {}).get(str(ctx.author.id), 0)
+        
+        # Calculate betting percentage
+        bet_percentage = (user_bet['amount'] / (user_balance + user_bet['amount'])) * 100 if (user_balance + user_bet['amount']) > 0 else 0
+        
+        # Enhanced mybet display
+        bet_info = [
+            f"🎯 **Current Bet:** `{user_bet['amount']}` coins on **{contestant_name}**",
+            f"💰 **Remaining Balance:** `{user_balance}` coins",
+            f"📊 **Bet Size:** {bet_percentage:.0f}% of your total funds",
+        ]
+        
+        # Add betting status context
+        if data["betting"]["locked"]:
+            bet_info.append("⏳ **Status:** Betting locked - awaiting results")
+        else:
+            remaining_time = None
+            timer_end = data.get("timer_end_time")
+            if timer_end:
+                remaining_time = max(0, int(timer_end - time.time()))
+            
+            if remaining_time and remaining_time > 0:
+                bet_info.append(f"⏱️ **Time Remaining:** {remaining_time}s to modify bet")
+            else:
+                bet_info.append("✅ **Status:** You can still modify your bet")
 
         await self._send_embed(
             ctx,
-            TITLE_CURRENT_BETS_OVERVIEW,
-            f"Your current bet:\n- Amount: `{user_bet['amount']}` coins\n- Choice: **{contestant_name}**",
+            "🎰 Your Current Bet",
+            "\n".join(bet_info),
             COLOR_INFO,
         )
 
@@ -1111,9 +1277,30 @@ class Betting(commands.Cog):
     async def bettinginfo(self, ctx: commands.Context) -> None:
         data = load_data()
         if not data["betting"]["open"]:
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_NO_ACTIVE_BET, COLOR_ERROR
-            )
+            if data["betting"]["locked"]:
+                # Betting round exists but is locked - show current betting info
+                live_message_link = get_live_message_link(self.bot, data, True)
+                contestants = data["betting"].get("contestants", {})
+                locked_info = [
+                    f"**Status:** 🔒 Betting Locked",
+                    f"**Contestants:** {', '.join(contestants.values())}",
+                    f"**Total Bets:** {len(data['betting']['bets'])}",
+                    f"**Winner will be declared shortly**",
+                ]
+                await self._send_embed(
+                    ctx,
+                    "🔒 Betting Round - Locked",
+                    "\n".join(locked_info) + (
+                        f"\n\n**Live Message:** [View Current Bets]({live_message_link})"
+                        if live_message_link else ""
+                    ),
+                    COLOR_ERROR,
+                )
+            else:
+                # No betting round at all
+                await self._send_embed(
+                    ctx, TITLE_BETTING_ERROR, MSG_NO_ACTIVE_BET, COLOR_ERROR
+                )
             return
 
         # --- Debug Info Gathering ---
@@ -1202,10 +1389,11 @@ class Betting(commands.Cog):
         # Deduct the bet amount from the user's balance
         user_balance = data["balances"][str(user.id)]
         if amount > user_balance:
+            shortfall = amount - user_balance
             await self._send_embed(
                 ctx,
-                TITLE_BETTING_ERROR,
-                f"Insufficient balance! User's current balance is `{user_balance}` coins.",
+                "❌ Insufficient Funds",
+                f"💰 **User's balance:** `{user_balance}` coins\n💸 **Bet amount:** `{amount}` coins\n❌ **Shortfall:** `{shortfall}` coins",
                 COLOR_ERROR,
             )
             return
@@ -1365,10 +1553,10 @@ class Betting(commands.Cog):
         if bet_amount > user_balance:
             # Insufficient balance, remove reaction and inform user in the channel
             await message.remove_reaction(payload.emoji, user)
-            # No direct message, inform in channel
+            shortfall = bet_amount - user_balance
             embed = discord.Embed(
-                title=TITLE_BETTING_ERROR,
-                description=f"<@{user.id}>, insufficient balance! Your current balance is `{user_balance}` coins.",
+                title="❌ Insufficient Funds",
+                description=f"<@{user.id}> 💰 **Your balance:** `{user_balance}` coins\n💸 **Reaction bet:** `{bet_amount}` coins\n❌ **You need:** `{shortfall}` more coins",
                 color=COLOR_ERROR,
             )
             await channel.send(embed=embed)

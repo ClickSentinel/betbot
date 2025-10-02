@@ -39,8 +39,31 @@ class Economy(commands.Cog):
         bal = data["balances"][str(target_member.id)]
 
         if target_member == ctx.author:
+            # Enhanced balance display with betting context
+            balance_info = [f"💰 **Your Balance:** `{bal}` coins"]
+            
+            # Add current bet context if user has an active bet
+            if data["betting"]["open"] or data["betting"]["locked"]:
+                user_bet = data["betting"]["bets"].get(str(target_member.id))
+                if user_bet:
+                    bet_amount = user_bet["amount"]
+                    choice = user_bet["choice"]
+                    contestants = data["betting"].get("contestants", {})
+                    contestant_name = next((name for name in contestants.values() if name.lower() == choice), choice.title())
+                    
+                    total_funds = bal + bet_amount
+                    balance_info.extend([
+                        f"🎯 **Active Bet:** `{bet_amount}` coins on **{contestant_name}**",
+                        f"📊 **Total Funds:** `{total_funds}` coins ({bet_amount}/{total_funds} betting)"
+                    ])
+                    
+                    if data["betting"]["locked"]:
+                        balance_info.append("⏳ **Status:** Awaiting bet results")
+                    else:
+                        balance_info.append("✅ **Status:** Bet can still be modified")
+            
             await self._send_embed(
-                ctx, TITLE_YOUR_BALANCE, f"You have `{bal}` coins.", COLOR_INFO
+                ctx, TITLE_YOUR_BALANCE, "\n".join(balance_info), COLOR_INFO
             )
         else:
             await self._send_embed(
