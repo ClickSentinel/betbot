@@ -10,7 +10,7 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 - **Smart Timer System**: 90-second rounds with optimized 5-second interval updates
 - **Themed Emojis**: Power/Victory (🔥⚡💪🏆) vs Excellence/Royalty (🌟💎🚀👑) themes
 - **Live Message Updates**: Real-time betting progress with visual feedback
-- **Role-Based Permissions**: Flexible admin system with BetBoy role support
+- **Role-Based Permissions**: Flexible admin system with betboy role support
 - **Production Ready**: Comprehensive logging, error handling, and 35+ automated tests
 
 ## 🚀 Quick Start
@@ -62,7 +62,7 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 
 ### 🔧 Admin Commands
 
-#### Betting Management (*BetBoy role* or *Manage Server*)
+#### Betting Management (*betboy role* or *Manage Server*)
 | Command | Alias | Description | Example |
 |---------|-------|-------------|---------|
 | `!openbet <name1> <name2>` | `!ob` | Start new betting round | `!openbet Alice Bob` |
@@ -130,7 +130,7 @@ betbot/
 ## 🔒 Permission System
 
 - **Users**: `!balance`, `!bet`, `!mybet`, `!bettinginfo`, reaction betting
-- **BetBoy Role**: All user commands + betting management (`!openbet`, `!lockbets`, etc.)
+- **betboy Role**: All user commands + betting management (`!openbet`, `!lockbets`, etc.)
 - **Manage Server**: All commands including economy management (`!give`, `!take`, etc.)
 
 ## 🤝 Contributing
@@ -140,10 +140,6 @@ betbot/
 3. Install dependencies: `pip install -r requirements.txt`
 4. Run tests: `python -m pytest`
 5. Submit pull request
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
