@@ -36,8 +36,29 @@ class Help(commands.Cog):
                                    footer_text="Bet responsibly!")
 
     @commands.command(name="adminhelp", aliases=["ah"])
-    @commands.has_permissions(manage_guild=True)
     async def admin_help_command(self, ctx: commands.Context) -> None:
+        # Check if user has manage_guild permission or BetBoy role
+        if not isinstance(ctx.author, discord.Member):
+            await self._send_embed(
+                ctx,
+                TITLE_HELP,
+                "This command can only be used in a server channel.",
+                COLOR_INFO
+            )
+            return
+
+        has_role = discord.utils.get(ctx.author.roles, name="betboy") is not None
+        has_permission = ctx.author.guild_permissions.manage_guild
+
+        if not (has_role or has_permission):
+            await self._send_embed(
+                ctx,
+                TITLE_HELP,
+                "You need the 'BetBoy' role or 'Manage Server' permission to use this command.",
+                COLOR_INFO
+            )
+            return
+
         await self._send_embed(ctx, TITLE_ADMIN_COMMANDS, DESC_ADMIN_HELP, COLOR_GOLD)
 
 async def setup(bot: commands.Bot):
