@@ -1,11 +1,77 @@
 import discord
 import math
 import time
-from typing import Optional, Tuple, Dict, Any, cast, List
+import asyncio
+from typing import Optional, Tuple, Dict, Any, cast, List, Set
 
 from data_manager import save_data, Data
 from .message_formatter import MessageFormatter
 from .bet_state import WinnerInfo, BetInfo, BettingSession, TimerInfo, UserResult
+
+
+class LiveMessageScheduler:
+    """Batches live message updates on a 5-second schedule to reduce API calls."""
+    
+    def __init__(self):
+        self.pending_updates: Set[str] = set()  # Set of data file paths needing updates
+        self.update_task: Optional[asyncio.Task] = None
+        self.bot: Optional[discord.Client] = None
+        self.is_running = False
+    
+    def set_bot(self, bot: discord.Client) -> None:
+        """Set the bot instance for making Discord API calls."""
+        self.bot = bot
+    
+    def schedule_update(self, data_identifier: str = "default") -> None:
+        """Schedule a live message update. Multiple calls within 5 seconds are batched."""
+        if not self.bot:
+            return
+            
+        self.pending_updates.add(data_identifier)
+        
+        # Start the update loop if not already running
+        if not self.is_running:
+            self.is_running = True
+            if self.update_task:
+                self.update_task.cancel()
+            self.update_task = asyncio.create_task(self._update_loop())
+    
+    async def _update_loop(self) -> None:
+        """Process batched updates every 5 seconds."""
+        try:
+            while self.pending_updates and self.bot:
+                await asyncio.sleep(5.0)  # 5-second batch window
+                
+                if self.pending_updates:
+                    # Process all pending updates in one batch
+                    updates_to_process = self.pending_updates.copy()
+                    self.pending_updates.clear()
+                    
+                    # Load current data and update all pending messages
+                    from data_manager import load_data
+                    data = load_data()
+                    
+                    # Update live message with current state
+                    await update_live_message(self.bot, data)
+                    
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"Error in live message update loop: {e}")
+        finally:
+            self.is_running = False
+    
+    def stop(self) -> None:
+        """Stop the update scheduler."""
+        self.is_running = False
+        if self.update_task:
+            self.update_task.cancel()
+            self.update_task = None
+
+
+# Global scheduler instance
+live_message_scheduler = LiveMessageScheduler()
+
 
 # State conversion utilities (moved from state_converter.py)
 def convert_to_betting_session(data: Data) -> BettingSession:
@@ -284,3 +350,18 @@ async def update_live_message(
                     print(
                         f"Error updating live message {msg_id} in channel {chan_id}: {e}"
                     )
+
+
+def schedule_live_message_update() -> None:
+    """Schedule a batched live message update. Multiple calls within 5 seconds are batched together."""
+    live_message_scheduler.schedule_update()
+
+
+def initialize_live_message_scheduler(bot: discord.Client) -> None:
+    """Initialize the live message scheduler with the bot instance."""
+    live_message_scheduler.set_bot(bot)
+
+
+def stop_live_message_scheduler() -> None:
+    """Stop the live message scheduler."""
+    live_message_scheduler.stop()

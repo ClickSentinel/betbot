@@ -68,6 +68,8 @@ from utils.live_message import (
     _get_contestant_from_emoji,
     get_live_message_link,
     get_secondary_live_message_info,
+    schedule_live_message_update,
+    initialize_live_message_scheduler,
 )
 from utils.bet_state import BetState
 from utils.bet_state import WinnerInfo
@@ -79,6 +81,9 @@ class Betting(commands.Cog):
         self.timer = BettingTimer(bot)
         data = load_data()
         self.bet_state = BetState(data)
+        
+        # Initialize the live message scheduler
+        initialize_live_message_scheduler(bot)
 
     # --- Helper Methods for Deduplication ---
 
@@ -185,8 +190,8 @@ class Betting(commands.Cog):
             'amount': str(amount)
         })
 
-        # Update live message (let it calculate timer internally for consistency)
-        await update_live_message(self.bot, data)
+        # Schedule live message update (batched for better performance)
+        schedule_live_message_update()
 
         # Notify user if requested
         if notify_user and channel:
@@ -1208,8 +1213,8 @@ class Betting(commands.Cog):
         data["balances"][str(user.id)] -= amount
         save_data(data)
 
-        # Update the live message with the new bet
-        await update_live_message(self.bot, data)
+        # Schedule live message update (batched for better performance)
+        schedule_live_message_update()
 
         await self._send_embed(
             ctx,
@@ -1442,7 +1447,7 @@ class Betting(commands.Cog):
                 data["balances"][user_id_str] += refund_amount
                 del data["betting"]["bets"][user_id_str]
                 save_data(data)
-                await update_live_message(self.bot, data)  # Update the display
+                schedule_live_message_update()  # Schedule batched update
 
 
 async def setup(bot: commands.Bot):

@@ -171,6 +171,11 @@ async def on_ready():
     logger.info(f"Connected to {len(bot.guilds)} guilds")
     logger.info(f"Latency: {bot.latency * 1000:.2f}ms")
     
+    # Initialize live message scheduler for batched updates
+    from utils.live_message import initialize_live_message_scheduler
+    initialize_live_message_scheduler(bot)
+    logger.info("Live message scheduler initialized for batched updates")
+    
     # Record startup metric
     performance_monitor.record_metric('bot.startup', 1)
 
