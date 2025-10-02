@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-import discord  # Import discord to use discord.Color
+import discord
 
 load_dotenv()
 
@@ -10,36 +10,36 @@ DATA_FILE = os.path.join(os.path.dirname(__file__), "data.json")
 STARTING_BALANCE = 1_000
 
 # New: Betting Timer Configuration
-ENABLE_BET_TIMER_DEFAULT = False  # Default state for the timer feature
-BET_TIMER_DURATION = 60  # Duration of the betting timer in seconds
-BET_TIMER_UPDATE_INTERVAL = 5  # How often the live message updates during the timer
+ENABLE_BET_TIMER_DEFAULT = False
+BET_TIMER_DURATION = 90
+BET_TIMER_UPDATE_INTERVAL = 5
 
 # ---------- Emojis ----------
-SEPARATOR_EMOJI = "➖"  # Example separator emoji
+SEPARATOR_EMOJI = "➖"
 
-# Main contestant display emojis (used in embeds for general display, e.g., !bet overview)
-CONTESTANT_EMOJI_1 = "🔴"  # Red Circle
-CONTESTANT_EMOJI_2 = "🔵"  # Blue Circle
-CONTESTANT_EMOJIS = [CONTESTANT_EMOJI_1, CONTESTANT_EMOJI_2]  # Used for general display
+# Main contestant display emojis
+CONTESTANT_EMOJI_1 = "🔴"
+CONTESTANT_EMOJI_2 = "🔵"
+CONTESTANT_EMOJIS = [CONTESTANT_EMOJI_1, CONTESTANT_EMOJI_2]
 
-# Emojis for Contestant 1 (Circles) - used for reaction betting
-C1_EMOJIS = ["🔴", "🟡", "🔵", "🟣"]
-# Emojis for Contestant 2 (Squares) - used for reaction betting
-C2_EMOJIS = ["🟥", "🟨", "🟦", "🟪"]
+# Emojis for Contestant 1 (Power/Victory theme) - used for reaction betting
+C1_EMOJIS = ["🔥", "⚡", "💪", "🏆"]
+# Emojis for Contestant 2 (Excellence/Royalty theme) - used for reaction betting
+C2_EMOJIS = ["🌟", "💎", "🚀", "👑"]
 
 # Mapping of reaction emojis to bet amounts
 REACTION_BET_AMOUNTS = {
-    "🔴": 100,
-    "🟡": 250,
-    "🔵": 500,
-    "🟣": 1000,
-    "🟥": 100,
-    "🟨": 250,
-    "🟦": 500,
-    "🟪": 1000,
+    "🔥": 100,
+    "⚡": 250,
+    "💪": 500,
+    "🏆": 1000,
+    "🌟": 100,
+    "💎": 250,
+    "🚀": 500,
+    "👑": 1000,
 }
 
-# ---------- Live Message Keys (for data_manager) ----------
+# ---------- Live Message Keys ----------
 LIVE_MESSAGE_KEY = "live_message"
 LIVE_CHANNEL_KEY = "live_channel"
 LIVE_SECONDARY_KEY = "live_secondary_message"
@@ -53,10 +53,17 @@ COLOR_ERROR = discord.Color(0xE74C3C)  # Red
 COLOR_GOLD = discord.Color(0xFFD700)  # Gold
 COLOR_DARK_ORANGE = discord.Color(0xFF8C00)  # Dark Orange
 COLOR_DARK_GRAY = discord.Color(0x607D8B)  # Dark Gray
+COLOR_WARNING = discord.Color(0xF1C40F)  # Yellow
+COLOR_ERROR = discord.Color(0xE74C3C)  # Red
+COLOR_GOLD = discord.Color(0xFFD700)  # Gold
+COLOR_DARK_ORANGE = discord.Color(0xFF8C00)  # Dark Orange
+COLOR_DARK_GRAY = discord.Color(0x607D8B)  # Dark Gray
 
 # ---------- General Messages ----------
 MSG_AMOUNT_POSITIVE = "Amount must be a positive number."
 MSG_INVALID_BET_FORMAT = "**Invalid bet format.**\nUse `!bet <contestant> <amount>` or `!bet <amount> <contestant>`.\nExample: `!bet Alice 100`"
+MSG_UNKNOWN_CONTESTANT = "**Unknown contestant: '{contestant_name}'**\n\nAvailable contestants:\n{contestants_list}\n\nExample: `!bet {example_contestant} 100`"
+MSG_INVALID_OPENBET_FORMAT = "**Invalid openbet format.**\nUse `!openbet <contestant1> <contestant2>` to start a new betting round.\nExample: `!openbet Alice Bob`"
 MSG_A_WINNER_DECLARED_SOON = "A winner will be declared soon."
 MSG_PLACE_MANUAL_BET_INSTRUCTIONS = (
     "To place a manual bet:\n`!bet <contestant> <amount>`\nExample: `!bet Alice 100`"
@@ -71,6 +78,7 @@ MSG_BET_LOCKED = (
 )
 MSG_NO_ACTIVE_BET = "⚠️ There is no active betting round."
 MSG_BET_LOCKED_NO_NEW_BETS = "⚠️ Betting is locked. No new bets can be placed."
+MSG_BET_LOCKED_WITH_LIVE_LINK = "⚠️ Betting is currently locked. No new bets can be placed.\n\n**Live Message:** [View Current Bets]({live_link})"
 MSG_NO_BETS_TO_CLOSE = "⚠️ There are no open or locked bets to close."
 MSG_INTERNAL_ERROR_LOCKED = (
     "❌ Internal error: Betting state is inconsistent (locked but not open)."
@@ -128,39 +136,42 @@ ROLE_BETBOY = "betboy"
 # ---------- Help Descriptions
 DESC_HELP_NOT_IMPLEMENTED = "Help for `{command_name}` is not yet implemented."
 DESC_GENERAL_HELP = (
-    "Welcome to BetBot! 🎉\n"
-    "Start a betting round between two contestants, place your bets, and win coins!\n\n"
-    "**How Betting Works:**\n"
-    "- An admin starts a round between two contestants.\n"
-    "- Place your bets!\n"
-    "- When the round ends, winners **split the pot proportionally to their bet size.**\n"
-    "- If no one bets on the winner, the pot is lost!\n\n"
-    "**User Commands:**\n"
-    "💰 `!balance`\n"
-    "   - Check your current coin balance.\n\n"
-    "💸 `!bet <contestant> <amount>`"
-    "   - Place a bet on one of the contestants. Example: `!bet Alice 100`.\n\n"
-    "📊 `!mybet`\n"
-    "   - Show your current bet in the active round.\n\n"
-    "ℹ️ `!bettinginfo`\n"
-    "   - Display current betting round information, including contestants, total pot, and a link to the live message.\n\n"
-    "**Reaction Betting:**\n"
-    "Place, change, or remove bets by reacting to the live betting message:\n"
-    "-   **Place/Change Bet**: Use reaction betting (e.g., 🔴, 🔵) to place a bet.\n"
-    "-   **Unbet**: Remove your reaction to cancel your bet.\n\n"
-    "For admin commands, please ask an admin for `!adminhelp`."
+    "🎉 **Welcome to BetBot!**\n"
+    "Start betting rounds, place your bets, and win coins!\n\n"
+    "**📋 How Betting Works:**\n"
+    "• An admin starts a round between two contestants\n"
+    "• Players place bets on their chosen contestant\n"
+    "• **Winners split the pot proportionally to their bet size**\n"
+    "• If no one bets on the winner, the pot is lost!\n\n"
+    "**💰 User Commands:**\n"
+    "• `!balance` (or `!bal`) - Check your coin balance\n"
+    "• `!bet <contestant> <amount>` (or `!b`) - Place a bet\n"
+    "   *Example: `!bet Alice 100`*\n"
+    "• `!mybet` (or `!mb`) - Show your current bet\n"
+    "• `!bettinginfo` (or `!bi`) - View betting round info\n\n"
+    "**🎯 Quick Betting with Reactions:**\n"
+    "• Click emoji reactions on the live message to bet instantly\n"
+    "• Change bet by clicking a different emoji\n"
+    "• Remove bet by removing your reaction\n\n"
+    "**🔧 Need Admin Help?**\n"
+    "Ask an admin to use `!adminhelp` (or `!ah`) for management commands"
 )
-DESC_ADMIN_HELP = (  # Updated to clarify !closebet is a shortcut and include new aliases
-    "Admin commands are integrated into the general help description.\n"
-    "Please use `!help` for a full overview of how betting works, including admin actions like starting and closing bets.\n **TO OPEN BETS, USER MUST HAVE `betboy` ROLE.**\n\n"
-    "**Quick Admin Command List:**\n"
-    "`!openbet <name1> <name2>` / `!ob` - Start a new betting round.\n"
-    "`!lockbets` / `!lb` - Lock current bets.\n"
-    "`!declarewinner <winner_name>` / `!dw` - Declare a winner for locked bets.\n"
-    "`!closebet <winner_name>` / `!cb` - **(Shortcut)** Lock bets, declare winner, and distribute coins.\n"  # Added (Shortcut)
-    "`!setbetchannel` / `!sbc` - Set the main live betting channel.\n"
-    "`!togglebettimer` / `!tbt` - Toggle the automatic betting timer.\n"
-    "`!give <@user> <amount>` / `!g` - Give coins to a user.\n"  # Updated with alias
-    "`!take <@user> <amount>` / `!t` - Take coins from a user.\n"  # Updated with alias
-    "`!setbal <@user> <amount>` / `!sb` - Set a user's balance."  # Updated with alias
+DESC_ADMIN_HELP = (
+    "🛠️ **Admin Commands Overview**\n"
+    "Use `!help` for general betting info and user commands.\n\n"
+    "**🔐 Permission Requirements:**\n"
+    "• **BetBoy Role**: Betting management commands\n"
+    "• **Manage Server**: Economy and bot settings\n\n"
+    "**🎲 Betting Management** *(BetBoy role)*\n"
+    "• `!openbet <name1> <name2>` (or `!ob`) - Start new betting round\n"
+    "• `!lockbets` (or `!lb`) - Lock current bets (stop new bets)\n"
+    "• `!declarewinner <winner>` (or `!dw`) - Declare winner for locked bets\n"
+    "• `!closebet <winner>` (or `!cb`) - **Quick shortcut: lock + declare + distribute**\n\n"
+    "**⚙️ Bot Settings** *(Manage Server)*\n"
+    "• `!setbetchannel` (or `!sbc`) - Set main betting channel\n"
+    "• `!togglebettimer` (or `!tbt`) - Toggle auto-timer for bets\n\n"
+    "**💸 Economy Management** *(Manage Server)*\n"
+    "• `!give <@user> <amount>` (or `!g`) - Give coins to user\n"
+    "• `!take <@user> <amount>` (or `!t`) - Remove coins from user\n"
+    "• `!setbal <@user> <amount>` (or `!sb`) - Set user's balance directly"
 )

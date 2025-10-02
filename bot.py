@@ -16,7 +16,12 @@ from betbot.config import (
     TOKEN,
     COLOR_ERROR,
     COLOR_WARNING,
-)  # Now 'betbot' is recognized
+)
+
+# Add enhanced logging
+from utils.logger import logger
+from utils.error_handler import error_handler
+from utils.performance_monitor import performance_monitor
 
 load_dotenv()
 
@@ -37,11 +42,11 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         # Load cogs
-        print("Loading cogs...")
+        logger.info("Loading cogs...")
         await self.load_extension("cogs.betting")
         await self.load_extension("cogs.economy")
         await self.load_extension("cogs.help")
-        print("Cogs loaded successfully.")
+        logger.info("Cogs loaded successfully.")
 
     async def get_context(self, message, *, cls=commands.Context):
         ctx = await super().get_context(message, cls=cls)
@@ -157,5 +162,36 @@ class MyBot(commands.Bot):
 
 bot = MyBot(command_prefix="!", intents=intents)
 bot.remove_command("help")  # Remove default help command to implement our own
+
+
+@bot.event
+async def on_ready():
+    """Called when the bot is ready."""
+    logger.info(f"Bot is ready! Logged in as {bot.user}")
+    logger.info(f"Connected to {len(bot.guilds)} guilds")
+    logger.info(f"Latency: {bot.latency * 1000:.2f}ms")
+    
+    # Record startup metric
+    performance_monitor.record_metric('bot.startup', 1)
+
+
+@bot.event
+async def on_command(ctx):
+    """Called before every command."""
+    logger.debug(f"Command '{ctx.command}' invoked by {ctx.author} in {ctx.guild}")
+    performance_monitor.record_metric('command.invoked', 1)
+
+
+@bot.event
+async def on_command_completion(ctx):
+    """Called after successful command completion."""
+    logger.debug(f"Command '{ctx.command}' completed successfully")
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Enhanced error handling with logging."""
+    await error_handler.handle_command_error(ctx, error)
+
 
 bot.run(TOKEN)
