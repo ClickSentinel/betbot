@@ -7,7 +7,7 @@ load_dotenv()
 # ---------- Bot Configuration ----------
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATA_FILE = os.path.join(os.path.dirname(__file__), "data.json")
-STARTING_BALANCE = 1_000
+STARTING_BALANCE = 10_000
 
 # New: Betting Timer Configuration
 ENABLE_BET_TIMER_DEFAULT = False
