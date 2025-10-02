@@ -20,16 +20,16 @@ betbot/
 │   └── help.py              # Help system
 ├── utils/                    # Core architectural components
 │   ├── bet_state.py         # State management system
-│   ├── betting_timer.py     # Timer management (NEW - extracted)
-│   ├── betting_utils.py     # Permissions & utilities (NEW - extracted)
+│   ├── betting_timer.py     # Timer management (extracted)
+│   ├── betting_utils.py     # Permissions & utilities (extracted)  
+│   ├── bet_ui.py            # UI components and formatting
 │   ├── message_formatter.py # UI formatting system
+│   ├── message_types.py     # Type definitions
+│   ├── state_converter.py   # Type-safe data conversions
 │   ├── live_message.py      # Message coordination
 │   ├── logger.py            # Structured logging system
 │   ├── error_handler.py     # Comprehensive error handling
-│   ├── performance_monitor.py # System monitoring
-│   ├── rate_limiter.py      # Anti-abuse protection
-│   ├── metrics.py           # Analytics and statistics
-│   └── validators.py        # Input validation
+│   └── performance_monitor.py # System monitoring
 ├── data_manager.py          # Data persistence layer
 ├── config.py               # Configuration constants
 └── tests/                  # Comprehensive test suite
@@ -62,7 +62,7 @@ The codebase follows a **modular architecture** with clear separation of concern
 - **`utils/betting_utils.py`**: Extracted permission checks and utilities
 - **`BettingPermissions`**: Role-based access control
 - **`BettingUtils`**: Common betting operations and helpers
-- **Role Support**: "Manage Guild" permissions or "BetBoy" role
+- **Role Support**: "Manage Guild" permissions or "betboy" role
 
 ### Enhanced UI/Messaging System (UPDATED - October 2025)
 - **Rich Visual Design**: Improved embeds with visual hierarchy and bullet points
@@ -110,7 +110,7 @@ The codebase follows a **modular architecture** with clear separation of concern
 - **Event Handling**: `on_raw_reaction_add`/`on_raw_reaction_remove` listeners
 - **One Per User**: Automatic removal of previous reactions
 - **Silent Operation**: No direct messages, only live message updates
-- **Validation**: Through `utils/validators.py`
+- **Validation**: Through `utils/betting_utils.py` validation functions
 
 ### 3. Locking Bets
 **Manual (`!lockbets`)**:
@@ -132,7 +132,7 @@ The codebase follows a **modular architecture** with clear separation of concern
 
 ### Emergency Commands
 - **`!forceclose`**: Force close stuck betting rounds
-- **`!togglebettimer`**: Enable/disable automatic timer (BetBoy role compatible)
+- **`!togglebettimer`**: Enable/disable automatic timer (betboy role compatible)
 
 ## 🎮 Reaction Betting System
 
@@ -162,7 +162,7 @@ The codebase follows a **modular architecture** with clear separation of concern
 # Flow for on_raw_reaction_add
 1. Identify user and emoji → BettingUtils.get_contestant_from_emoji()
 2. Get bet amount → REACTION_BET_AMOUNTS[emoji]
-3. Validate balance → utils/validators.py
+3. Validate balance → utils/betting_utils.py validation
 4. Handle existing bet:
    - Refund previous amount
    - Remove old reactions via BettingUtils
@@ -201,12 +201,12 @@ The codebase follows a **modular architecture** with clear separation of concern
 ```python
 # Permission Hierarchy
 1. Server Admins (manage_guild permission)
-2. BetBoy Role (custom role-based access)
+2. betboy Role (custom role-based access)
 3. Regular Users (basic commands only)
 ```
 
 **Admin Commands**: `!openbet`, `!lockbets`, `!declarewinner`, `!closebet`, `!forceclose`
-**BetBoy Commands**: `!togglebettimer` (NEW - added role support)
+**betboy Commands**: `!togglebettimer` (NEW - added role support)
 **User Commands**: `!bet`, `!balance`, `!mybet`
 
 ### Permission Checking
@@ -219,12 +219,11 @@ The codebase follows a **modular architecture** with clear separation of concern
 ### Monitoring & Observability
 - **Logging**: `utils/logger.py` - Structured rotating logs
 - **Performance**: `utils/performance_monitor.py` - System metrics & health checks
-- **Metrics**: `utils/metrics.py` - User statistics and leaderboards
 - **Error Tracking**: `utils/error_handler.py` - Comprehensive error management
 
 ### Reliability & Safety
-- **Rate Limiting**: `utils/rate_limiter.py` - Anti-abuse protection
-- **Validation**: `utils/validators.py` - Input validation with helpful errors
+- **Built-in Rate Limiting**: Discord API optimization with retry logic built into core functions
+- **Validation**: `utils/betting_utils.py` - Input validation with helpful errors
 - **Data Integrity**: Automatic data validation and repair
 - **Error Recovery**: Graceful handling of Discord API failures
 
@@ -310,7 +309,7 @@ tests/
 └── __pycache__/         # Compiled test files
 ```
 
-**Current Status**: ✅ **35/35 tests passing** - Comprehensive coverage including October 2025 improvements
+**Current Status**: ✅ **35/35 tests passing** - Comprehensive coverage including all October 2025 improvements
 
 ### Testing Framework & Tools
 - **Primary**: `pytest` with `pytest-asyncio` for Discord.py compatibility
@@ -431,7 +430,7 @@ The codebase has been significantly refactored for better maintainability and te
 
 **Security Improvements**:
 - **Role-Based Permissions**: Enhanced `BettingPermissions` class
-- **BetBoy Role Support**: Added to `!togglebettimer` command
+- **betboy Role Support**: Added to `!togglebettimer` command
 - **Data Integrity**: Validation and automatic repair mechanisms
 
 ### Development Workflow
@@ -442,7 +441,7 @@ The codebase has been significantly refactored for better maintainability and te
 - **Error Recovery**: Graceful handling of edge cases and failures
 
 **Quality Assurance**:
-- **100% Test Coverage**: All 15 tests passing consistently
+- **Comprehensive Test Coverage**: All 35 tests passing consistently
 - **Lint-Free Code**: No syntax or style errors
 - **Documentation**: Comprehensive inline documentation and type hints
 - **Performance**: Optimized for Discord rate limits and responsiveness
@@ -466,7 +465,7 @@ python -m pytest --verbose        # Detailed test output
 - **Business Logic**: `utils/bet_state.py`, `utils/betting_timer.py`
 - **Configuration**: `config.py`
 - **Messages**: `config.py` (message constants)
-- **Utilities**: `utils/betting_utils.py`, `utils/validators.py`
+- **Utilities**: `utils/betting_utils.py`, `utils/betting_timer.py`
 
 ### Debug Checklist (UPDATED - October 2025)
 1. ✅ All 35 tests passing (`python -m pytest`)
