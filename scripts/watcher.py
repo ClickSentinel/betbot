@@ -17,9 +17,10 @@ class BotRestarter(FileSystemEventHandler):
 
     def _get_venv_python_executable(self):
         """Determines the path to the Python executable within the .venv."""
+        # Get the betbot directory (parent of scripts directory)
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        # CHANGE: .venv is now directly inside script_dir (betbot folder)
-        venv_path = os.path.join(script_dir, ".venv")
+        betbot_dir = os.path.dirname(script_dir)
+        venv_path = os.path.join(betbot_dir, ".venv")
 
         if sys.platform == "win32":
             python_executable = os.path.join(venv_path, "Scripts", "python.exe")
@@ -36,15 +37,18 @@ class BotRestarter(FileSystemEventHandler):
 
     def _start_bot(self):
         """Starts the bot process."""
-        bot_script_full_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), self.bot_script_name
-        )
-        # Changed print statement to only show the Python executable path
+        # Get the betbot directory (parent of scripts directory)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        betbot_dir = os.path.dirname(script_dir)
+        bot_script_full_path = os.path.join(betbot_dir, self.bot_script_name)
+        
         print(f"Starting bot using {self.venv_python_executable}")
-        # Set cwd to the bot's directory so it can find its modules (config, data_manager, etc.)
+        print(f"Bot script path: {bot_script_full_path}")
+        
+        # Set cwd to the betbot directory so it can find its modules
         return subprocess.Popen(
             [self.venv_python_executable, bot_script_full_path],
-            cwd=os.path.dirname(bot_script_full_path),
+            cwd=betbot_dir,
         )
 
     def _restart_bot_action(self):
@@ -68,11 +72,13 @@ class BotRestarter(FileSystemEventHandler):
         # Only react to .py file modifications
         _, ext = os.path.splitext(event.src_path)
         if ext == ".py":
-            script_dir_abs = os.path.abspath(os.path.dirname(__file__))
+            # Get the betbot directory (parent of scripts directory)
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            betbot_dir_abs = os.path.abspath(os.path.dirname(script_dir))
             event_src_path_abs = os.path.abspath(event.src_path)
 
             # Ensure the modified file is within the watched directory (betbot)
-            if event_src_path_abs.startswith(script_dir_abs + os.sep) or event_src_path_abs == script_dir_abs:  # type: ignore
+            if event_src_path_abs.startswith(betbot_dir_abs + os.sep) or event_src_path_abs == betbot_dir_abs:  # type: ignore
                 with self._lock:
                     # Cancel any pending restart to debounce multiple rapid changes
                     if self._restart_timer is not None:
@@ -87,8 +93,9 @@ class BotRestarter(FileSystemEventHandler):
 
 
 if __name__ == "__main__":
-    # The watcher will monitor the 'betbot' directory
-    watched_path = os.path.dirname(os.path.abspath(__file__))
+    # The watcher will monitor the 'betbot' directory (parent of scripts)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    watched_path = os.path.dirname(script_dir)  # betbot directory
     bot_main_script = "bot.py"
 
     event_handler = BotRestarter(bot_main_script)

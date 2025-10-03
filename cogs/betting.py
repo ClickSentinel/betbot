@@ -166,19 +166,15 @@ class Betting(commands.Cog):
                 notify_user=False,  # Don't send notification messages for reaction bets
             )
             
+            # Always clean up old reactions, but behavior depends on success
             if success:
-                # Remove ALL betting reactions from the user, then add back the final one
+                # Remove all OTHER betting reactions from the user, but keep the final one
+                # The final emoji is already on the message from Discord, so we just exclude it from removal
                 await self._remove_user_betting_reactions(
-                    message, user, data, exclude_emoji=None  # Remove ALL reactions first
+                    message, user, data, exclude_emoji=final_emoji
                 )
-                
-                # Add back the final emoji
-                try:
-                    await message.add_reaction(final_emoji)
-                except discord.HTTPException as e:
-                    print(f"Error adding final reaction {final_emoji}: {e}")
             else:
-                # If bet failed, remove all reactions including the final one
+                # If bet failed, remove ALL reactions including the final one
                 await self._remove_user_betting_reactions(
                     message, user, data, exclude_emoji=None
                 )

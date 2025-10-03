@@ -1,96 +1,115 @@
-# 🚀 Quick Reference: New Features & Improvements
+# 🎯 BetBot Command Reference
 
-## 🎯 For Users
+Quick reference for all BetBot commands and usage patterns.
 
-### Reaction Batching (The Big One!)
-**Problem Solved**: Spam-clicking multiple reaction emojis used to cause conflicts and messy bet states.
+## 👤 User Commands
 
-**New Behavior**: 
-- Click multiple reactions rapidly → System waits 1 second → Processes only your FINAL choice
-- All other reactions automatically removed → Clean visual result
-- Works across contestants (🔥 → 🌟 → 💪 → 👑)
+### Balance & Betting
+| Command | Alias | Description | Example |
+|---------|-------|-------------|---------|
+| `!balance` | `!bal` | Check your coin balance & active bets | `!balance` |
+| `!bet <contestant> <amount>` | `!b` | Place a bet on contestant | `!bet Alice 100` |
+| `!betall <contestant>` | `!allin` | Bet all your coins | `!betall Alice` |
+| `!mybet` | `!mb` | View your current bet & status | `!mybet` |
 
-**What You'll Notice**:
-- Smooth reaction experience even when clicking rapidly
-- Only your final selection remains visible
-- No more conflicting or stuck bet states
+### Information
+| Command | Alias | Description | Example |
+|---------|-------|-------------|---------|
+| `!bettinginfo` | `!bi` | Display round information | `!bettinginfo` |
+| `!help` | `!h` | Show user help | `!help` |
 
-### Enhanced Error Messages
-**Before**: "Error: Invalid contestant"
-**Now**: "Contestant 'Charlie' not found. Available contestants: Alice, Bob"
+## 🔧 Admin Commands
 
-**Before**: Bot shows winner statistics AND "No bets were placed" (confusing!)
-**Now**: Clear "No bets were placed in this round. Alice wins by default!"
+### Betting Management
+*Requires "betboy" role or "Manage Server" permission*
 
-## 🔧 For Developers
+| Command | Alias | Description | Example |
+|---------|-------|-------------|---------|
+| `!openbet <name1> <name2>` | `!ob` | Start new betting round | `!openbet Alice Bob` |
+| `!lockbets` | `!lb` | Lock current round | `!lockbets` |
+| `!declarewinner <winner>` | `!dw` | Declare winner & payout | `!declarewinner Alice` |
+| `!closebet <winner>` | `!cb` | Lock + declare + payout | `!closebet Alice` |
+| `!forceclose` | | Emergency close round | `!forceclose` |
+| `!togglebettimer` | `!tbt` | Toggle 90-second auto-timer | `!togglebettimer` |
+| `!adminhelp` | `!ah` | Show admin help | `!adminhelp` |
 
-### Testing Suite Expansion
-- **127 tests** (up from 84) with **0 failures**
-- **0 RuntimeWarnings** (fixed all async issues)
-- **100% coverage** of previously untested components
+### Economy Management
+*Requires "Manage Server" permission*
 
-### New Test Modules
+| Command | Alias | Description | Example |
+|---------|-------|-------------|---------|
+| `!give <@user> <amount>` | `!g` | Give coins to user | `!give @Alice 1000` |
+| `!take <@user> <amount>` | `!t` | Take coins from user | `!take @Alice 500` |
+| `!setbal <@user> <amount>` | `!sb` | Set user's balance | `!setbal @Alice 2000` |
+| `!manualbet <@user> <amount> <contestant>` | | Place bet for user | `!manualbet @Alice 100 Bob` |
+
+### Configuration
+*Requires "Manage Server" permission*
+
+| Command | Alias | Description | Example |
+|---------|-------|-------------|---------|
+| `!setbetchannel [channel]` | `!sbc` | Set betting channel | `!setbetchannel #betting` |
+| `!setbettimer <seconds>` | | Set timer duration | `!setbettimer 300` |
+
+## 🎯 Reaction Betting
+
+**Quick Betting**: Click emoji reactions to bet instantly
+
+### Contestant 1 (Power/Victory Theme)
+- 🔥 **100 coins**
+- ⚡ **250 coins** 
+- 💪 **500 coins**
+- 🏆 **1000 coins**
+
+### Contestant 2 (Excellence/Royalty Theme)
+- 🌟 **100 coins**
+- 💎 **250 coins**
+- 🚀 **500 coins**
+- 👑 **1000 coins**
+
+### Reaction Behavior
+- **Click emoji** → Places bet immediately
+- **Change reaction** → Updates bet to new amount/contestant
+- **Remove reaction** → Cancels bet (full refund)
+- **Multiple rapid clicks** → System processes only your final selection
+
+## 🔒 Permission Levels
+
+### Regular Users
+- Balance checking (`!balance`, `!mybet`)
+- Betting (`!bet`, `!betall`, reaction betting)
+- Information (`!bettinginfo`, `!help`)
+
+### Betting Admins ("betboy" role)
+- All user commands
+- Betting management (`!openbet`, `!lockbets`, `!declarewinner`, etc.)
+- Timer controls (`!togglebettimer`)
+
+### Server Admins ("Manage Server" permission)
+- All betting admin commands
+- Economy management (`!give`, `!take`, `!setbal`)
+- Configuration (`!setbetchannel`, `!setbettimer`)
+
+## 🚀 Development Commands
+
 ```bash
-pytest tests/test_multiple_reactions.py -v    # Reaction batching
-pytest tests/test_economy_cog.py -v           # Admin balance commands  
-pytest tests/test_help_cog.py -v              # Help system
-pytest tests/test_error_handling.py -v        # Error patterns
-pytest tests/test_live_message.py -v          # Live message functionality
-```
+# Run the bot
+python bot.py
 
-### Key Technical Changes
-- **Batching System**: `_pending_reaction_bets` + `_reaction_timers` tracking
-- **Timer Processing**: `_delayed_reaction_processing()` with cancellation
-- **State Management**: Enhanced `_process_winner_declaration()` logic
-- **Clean Architecture**: Backward compatible, no breaking changes
+# Development with auto-restart
+python scripts/watcher.py
 
-## 🚦 For Admins
-
-### Deployment Testing
-After updating, verify these key improvements:
-
-1. **Reaction Batching**: Have someone rapidly click multiple reaction emojis
-   - ✅ Should see: Only final emoji remains, others automatically removed
-   
-2. **No-Bet Winner Declaration**: `!declarewinner Alice` with no active bets
-   - ✅ Should see: "No bets were placed in this round. Alice wins by default!"
-   - ❌ Should NOT see: Statistics combined with "no bets" message
-
-3. **Test Suite**: `python -m pytest`
-   - ✅ Should see: `127 passed in X seconds`
-   - ❌ Should NOT see: Any failures or RuntimeWarnings
-
-### Performance Notes
-- **API Efficiency**: Reaction processing now batched, reducing Discord API calls
-- **Memory Management**: Proper cleanup of tracking dictionaries
-- **User Experience**: Smoother interactions, elimination of common frustration points
-
-## 📈 Quality Metrics
-
-| Area | Improvement |
-|------|-------------|
-| Test Coverage | +51% (84→127 tests) |
-| Test Reliability | 100% (0 failures) |
-| User Complaints | ~90% reduction (reaction conflicts eliminated) |
-| Code Maintainability | Significantly improved |
-| Error Handling | Comprehensive edge case coverage |
-
-## 🎯 Quick Commands for Verification
-
-```bash
-# Full test suite
+# Run all tests
 python -m pytest
 
-# Test specific new features  
-python -m pytest tests/test_multiple_reactions.py -v
-
-# Check for any runtime warnings
-python -m pytest -W default::RuntimeWarning
-
-# Run specific component tests
-python -m pytest tests/test_economy_cog.py tests/test_help_cog.py -v
+# Run specific test modules
+python -m pytest tests/test_betting.py -v
 ```
 
----
+## 💡 Quick Tips
 
-**Bottom Line**: This update transforms BetBot from "works well" to "enterprise-ready" with bulletproof testing, intelligent reaction handling, and comprehensive error management. Users get a smoother experience, developers get reliable tests, and admins get peace of mind.
+- **Fuzzy matching**: "alice", "ALICE", "Ali" all work for "Alice"
+- **Balance warnings**: Get notified when betting 70%+ of your balance
+- **Bet changes**: See before/after confirmation with net change
+- **Timer**: 90-second rounds with updates at 5-second intervals
+- **Live updates**: Bet changes update the live message every 5 seconds
