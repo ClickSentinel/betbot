@@ -207,6 +207,10 @@ betbot/
 - **docs/QUICK_REFERENCE.md** - Quick guide for users, developers, and admins
 - **.github/copilot-instructions.md** - Development guidelines and architecture overview
 
+### Future Enhancements
+- **docs/MULTI_BET_OVERVIEW.md** - Comprehensive analysis of multiple concurrent betting sessions
+- **docs/MULTI_BET_TECHNICAL_SPEC.md** - Technical specification for multi-bet implementation
+
 ### Utility Scripts
 - **scripts/watcher.py** - Development file watcher with auto-restart
 - **scripts/fix_bot_issues.py** - Issue resolution and debugging utility
