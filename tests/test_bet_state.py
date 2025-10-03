@@ -8,8 +8,8 @@ project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from betbot.utils.bet_state import BetState, Economy
-from betbot.utils.bet_state import BetInfo, WinnerInfo
+from utils.bet_state import BetState, Economy
+from utils.bet_state import BetInfo, WinnerInfo
 
 
 class TestBetState:

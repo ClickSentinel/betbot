@@ -16,7 +16,7 @@ project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from betbot.cogs.betting import Betting
+from cogs.betting import Betting
 from tests.conftest import setup_member_with_role
 
 

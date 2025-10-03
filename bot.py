@@ -1,7 +1,7 @@
 from utils.performance_monitor import performance_monitor
 from utils.error_handler import error_handler
 from utils.logger import logger
-from betbot.config import (
+from config import (
     TOKEN,
     COLOR_ERROR,
     COLOR_WARNING,

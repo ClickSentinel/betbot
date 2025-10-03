@@ -7,9 +7,9 @@ from config import (
     MSG_AMOUNT_POSITIVE,
 )
 from tests.conftest import setup_member_with_role, assert_embed_contains, MockRole
-from betbot.utils.live_message import update_live_message
-from betbot.utils.bet_state import BetState
-from betbot.cogs.betting import Betting
+from utils.live_message import update_live_message
+from utils.bet_state import BetState
+from cogs.betting import Betting
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord

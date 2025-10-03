@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 
 # Import the classes we're testing
-from betbot.utils.live_message import (
+from utils.live_message import (
     LiveMessageScheduler,
     schedule_live_message_update,
     initialize_live_message_scheduler,

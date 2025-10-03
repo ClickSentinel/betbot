@@ -6,9 +6,9 @@ import discord
 from discord.ext import commands
 
 # Import the classes we're testing
-from betbot.utils.betting_timer import BettingTimer
-from betbot.cogs.betting import Betting
-from betbot.data_manager import save_data, load_data
+from utils.betting_timer import BettingTimer
+from cogs.betting import Betting
+from data_manager import save_data, load_data
 
 
 class TestAutomaticBetLocking:
