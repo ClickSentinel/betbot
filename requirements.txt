@@ -3,9 +3,9 @@ discord.py>=2.6.0
 python-dotenv>=1.0.0
 
 # Development tools
-watchdog>=6.0.0
-psutil>=7.0.0
+watchdog>=6.0.0      # File watching for auto-restart during development
+psutil>=7.0.0        # System monitoring and process management
 
 # Testing framework
-pytest>=8.0.0
-pytest-asyncio>=1.0.0
+pytest>=8.0.0        # Python testing framework
+pytest-asyncio>=1.0.0  # Async test support for Discord.py

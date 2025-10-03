@@ -13,9 +13,11 @@ This deployment guide covers the latest enhancements including:
 - **Smart Betting Features**: `!betall` command, typo-resistant contestant matching
 - **Enhanced UX**: Rich error messages, balance warnings, bet change confirmations
 - **Rate Limiting Protection**: Advanced Discord API optimization
-- **Comprehensive Testing**: 127 automated tests ensure reliability
+- **Comprehensive Testing**: 129 automated tests ensure reliability
 - **Advanced Reaction Processing**: Smart batching system for multiple rapid reactions
 - **Enhanced Error Handling**: Improved edge case handling and user feedback
+- **Code Quality**: Black formatting applied, import paths fixed, proper file organization
+- **Development Experience**: Enhanced tooling, better error reporting, organized test structure
 
 ## Setup Steps
 
@@ -124,7 +126,7 @@ tail -f bot.log
 - Timer functionality: Start betting round and verify 90-second countdown
 - Check memory usage: `free -h`
 - Check disk space: `df -h`
-- Run test suite: `python -m pytest` (should show 51/51 passing)
+- Run test suite: `python -m pytest` (should show 129/129 passing)
 
 ### 6. Backup & Recovery
 
@@ -165,7 +167,7 @@ pip install -r requirements.txt --upgrade
 # Run tests to ensure stability
 python -m pytest
 
-# If tests pass (127/127), restart bot
+# If tests pass (129/129), restart bot
 sudo systemctl start betbot
 
 # Verify new features work

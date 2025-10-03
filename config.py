@@ -5,6 +5,7 @@ import discord
 load_dotenv()
 
 # ---------- Bot Configuration ----------
+__version__ = "2.1.0"
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATA_FILE = os.path.join(os.path.dirname(__file__), "data.json")
 STARTING_BALANCE = 10_000
