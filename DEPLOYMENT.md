@@ -13,7 +13,9 @@ This deployment guide covers the latest enhancements including:
 - **Smart Betting Features**: `!betall` command, typo-resistant contestant matching
 - **Enhanced UX**: Rich error messages, balance warnings, bet change confirmations
 - **Rate Limiting Protection**: Advanced Discord API optimization
-- **Comprehensive Testing**: 58 automated tests ensure reliability
+- **Comprehensive Testing**: 127 automated tests ensure reliability
+- **Advanced Reaction Processing**: Smart batching system for multiple rapid reactions
+- **Enhanced Error Handling**: Improved edge case handling and user feedback
 
 ## Setup Steps
 
@@ -163,11 +165,11 @@ pip install -r requirements.txt --upgrade
 # Run tests to ensure stability
 python -m pytest
 
-# If tests pass (51/51), restart bot
+# If tests pass (127/127), restart bot
 sudo systemctl start betbot
 
 # Verify new features work
-# Check themed emojis, timer updates, enhanced error messages
+# Check themed emojis, timer updates, enhanced error messages, reaction batching
 ```
 
 ## 🧪 Post-Deployment Testing
@@ -201,7 +203,16 @@ After deployment, verify these critical improvements:
 # Verify old reaction is automatically removed
 ```
 
-**5. Batched Live Updates:**
+**5. Reaction Batching System:**
+```bash
+# Rapidly click multiple different reaction emojis (spam clicking)
+# Verify: Only the LAST reaction is processed after 1-second delay
+# Verify: All previous reactions are automatically removed
+# Check: Live message shows only the final selected emoji
+# Test: Works across different contestants (e.g., 🔥 → 🌟 → 💪 → 👑)
+```
+
+**6. Batched Live Updates:**
 ```bash
 # Have multiple users place rapid bets (within 5 seconds)
 # Verify: Live message updates once every 5 seconds, showing all bet changes
@@ -228,6 +239,12 @@ After deployment, verify these critical improvements:
 1. Verify bot has "Add Reactions" permission
 2. Check themed emoji configuration in data.json
 3. Test reaction order: contestant 1 → separator → contestant 2
+
+**Reaction batching issues:**
+1. Check for race conditions in rapid clicking
+2. Verify _pending_reaction_bets and _reaction_timers are properly cleaned up
+3. Test edge case: User clicking during the 1-second processing delay
+4. Monitor logs for "Processing batched reaction" messages
 
 **Enhanced error messages not showing:**
 1. Check config.py for enhanced error message constants

@@ -11,7 +11,8 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 - **Themed Emojis**: Power/Victory (🔥⚡💪🏆) vs Excellence/Royalty (🌟💎🚀👑) themes
 - **Batched Live Updates**: Intelligent 5-second batching reduces API calls by 80%
 - **Role-Based Permissions**: Flexible admin system with betboy role support
-- **Production Ready**: Comprehensive logging, error handling, and 51 automated tests
+- **Production Ready**: Comprehensive logging, error handling, and 127 automated tests
+- **Smart Reaction Handling**: Advanced batching system for multiple rapid reactions
 
 ## 🚀 Quick Start
 
@@ -95,6 +96,8 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 - Click different emoji to change bet → Rich before/after confirmation
 - Remove reaction to cancel bet → Full refund
 - Manual commands automatically remove reaction bets
+- **Smart Rapid Reaction Handling**: Multiple quick reactions are batched - only your final choice is processed
+- **Clean Visual Feedback**: All reactions are cleaned up, showing only your final selection
 
 ## ✨ Enhanced User Experience
 
@@ -116,16 +119,21 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 
 **Intelligent Live Message Batching**: Multiple rapid bet changes are consolidated into single Discord API calls every 5 seconds, reducing API usage from 60+ calls/minute to maximum 12 calls/minute during busy periods while maintaining real-time user experience.
 
+**Advanced Reaction Processing**: When users rapidly click multiple reaction emojis, the system intelligently batches these interactions with a 1-second delay, processes only the final selection, and cleanly removes all other reactions. This prevents bet conflicts and provides smooth visual feedback.
+
 ## 🛠️ Development
 
 ### Testing
 ```bash
-# Run all tests (58 passing)
+# Run all tests (127 passing)
 python -m pytest
 
 # Run specific test modules
-python -m pytest tests/test_live_message_scheduler.py -v  # Scheduler tests
-python -m pytest tests/test_betting.py -v                # Betting logic tests
+python -m pytest tests/test_betting.py -v                # Core betting logic tests
+python -m pytest tests/test_multiple_reactions.py -v     # Reaction batching tests
+python -m pytest tests/test_economy_cog.py -v            # Economy system tests
+python -m pytest tests/test_help_cog.py -v               # Help system tests
+python -m pytest tests/test_live_message.py -v           # Live message tests
 
 # Development mode with auto-restart
 python watcher.py
@@ -150,7 +158,14 @@ betbot/
 │   ├── logger.py           # Logging system
 │   ├── error_handler.py    # Error management
 │   └── performance_monitor.py # System monitoring
-└── tests/                   # Test suite (58 tests)
+└── tests/                   # Test suite (127 tests)
+    ├── test_betting.py         # Core betting logic
+    ├── test_multiple_reactions.py # Reaction batching system
+    ├── test_economy_cog.py     # Economy management
+    ├── test_help_cog.py        # Help system
+    ├── test_live_message.py    # Live message updates
+    ├── test_error_handling.py  # Error handling
+    └── [13 more test modules]  # Comprehensive coverage
 ```
 
 ## 🔒 Permission System
@@ -174,7 +189,7 @@ betbot/
 **🎲 BetBot - Where Every Bet Counts! 🎲**
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://python.org)
-[![Tests](https://img.shields.io/badge/Tests-51%2F51%20Passing-green)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-127%2F127%20Passing-green)](tests/)
 [![Code Quality](https://img.shields.io/badge/Vibe%20Coded-100%25-purple)]()
 
 </div>

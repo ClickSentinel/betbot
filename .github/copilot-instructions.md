@@ -21,7 +21,14 @@ betbot/
 │   └── performance_monitor.py # System monitoring
 ├── data_manager.py          # Data persistence layer
 ├── config.py               # Configuration constants
-└── tests/                  # 58 automated tests
+└── tests/                  # 127 automated tests
+    ├── test_betting.py        # Core betting logic (26 tests)
+    ├── test_multiple_reactions.py # Reaction batching (4 tests)
+    ├── test_economy_cog.py    # Economy management (11 tests)
+    ├── test_help_cog.py       # Help system (9 tests)
+    ├── test_live_message.py   # Live message updates (13 tests)
+    ├── test_error_handling.py # Error handling (6 tests)
+    └── [10 more modules]      # Comprehensive edge case coverage
 ```
 
 ## 🔧 Key Components
@@ -90,6 +97,17 @@ betbot/
 - **Processing**: `_process_bet()` handles bet placement/changes
 - **Cleanup**: All reactions cleared when betting locks
 
+### Reaction Batching System (NEW)
+- **Problem Solved**: Multiple rapid reactions from same user causing conflicts
+- **Solution**: 1-second delay batching system that processes only the final reaction
+- **Key Components**:
+  - `_pending_reaction_bets`: Dict tracking latest reaction per user
+  - `_reaction_timers`: Dict tracking processing timers per user
+  - `_process_batched_reaction()`: Processes final bet after delay
+  - `_delayed_reaction_processing()`: Handles 1-second delay with cancellation
+- **Behavior**: User spam-clicking multiple emojis → Only last emoji processed → All others removed
+- **Visual Result**: Clean message showing only user's final selection
+
 ## 🔒 Key Data Structures
 
 ### BetState Class (`utils/bet_state.py`)
@@ -117,10 +135,10 @@ betbot/
 ## 🧪 Testing
 
 ### Test Structure
-- **58 automated tests** covering all functionality
-- **Key test files**: `test_betting.py`, `test_bet_state.py`, `test_live_message_scheduler.py`
+- **127 automated tests** covering all functionality
+- **Key test files**: `test_betting.py`, `test_multiple_reactions.py`, `test_economy_cog.py`, `test_help_cog.py`
 - **Run tests**: `python -m pytest`
-- **Coverage**: All betting workflows, timer system, live message batching
+- **Coverage**: All betting workflows, reaction batching, timer system, live message batching, error handling
 
 ## 🎨 Development Notes
 
@@ -133,12 +151,14 @@ betbot/
 - **All state changes go through `data_manager.save_data()`**
 - **Enhanced UX**: Balance warnings, typo-resistant matching, rich error messages
 - **Smart features**: `!betall` command, improved bet change confirmations
+- **Reaction batching**: Advanced system handles multiple rapid reactions intelligently
+- **Edge case handling**: Comprehensive error handling and user feedback improvements
 
 ## 📋 Quick Reference
 
 ### Development Commands
 ```bash
-python -m pytest                   # Run all 58 tests
+python -m pytest                   # Run all 127 tests
 python bot.py                      # Start the bot
 python watcher.py                  # Development file watcher
 ```
