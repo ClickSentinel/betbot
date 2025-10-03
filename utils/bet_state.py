@@ -1,10 +1,19 @@
-from typing import Dict, Optional, TypedDict, cast, Any, Mapping, List, Literal
-from dataclasses import dataclass
+from data_manager import Data, save_data, ensure_user
+from config import (
+    COLOR_ERROR,
+    BET_TIMER_DURATION,
+    TITLE_BETTING_ERROR,
+    MSG_BET_ALREADY_OPEN,
+    MSG_BET_LOCKED,
+)
+from typing import Dict, Optional, TypedDict, cast, Any, List, Literal
 from discord.ext import commands
 import discord
 import time
 
 # Type definitions (moved from message_types.py)
+
+
 class BetInfo(TypedDict):
     amount: int
     choice: str
@@ -36,7 +45,7 @@ class BetUIState(TypedDict):
     bet_session: BettingSession
     emoji_config: Dict[str, List[str]]
     reaction_amounts: Dict[str, int]
-    timer_info: Optional['TimerInfo']
+    timer_info: Optional["TimerInfo"]
     winner_info: Optional[WinnerInfo]
 
 
@@ -47,27 +56,18 @@ class TimerInfo(TypedDict):
 
 TransactionType = Literal["add", "remove", "set"]
 
-from config import (
-    COLOR_ERROR,
-    BET_TIMER_DURATION,
-    TITLE_BETTING_ERROR,
-    MSG_BET_ALREADY_OPEN,
-    MSG_BET_LOCKED,
-)
-from data_manager import Data, save_data, ensure_user
-
 
 class Economy:
     """Centralized economy management."""
-    
+
     def __init__(self, data: Data):
         self.data = data
-        
+
     def get_balance(self, user_id: str) -> int:
         """Get a user's current balance, ensuring they exist in the system."""
         ensure_user(self.data, user_id)
         return self.data["balances"][user_id]
-        
+
     def add_balance(self, user_id: str, amount: int) -> bool:
         """Add to a user's balance. Returns True if successful."""
         if amount < 0:
@@ -76,7 +76,7 @@ class Economy:
         self.data["balances"][user_id] += amount
         save_data(self.data)
         return True
-        
+
     def remove_balance(self, user_id: str, amount: int) -> bool:
         """Remove from a user's balance. Returns False if insufficient funds."""
         if amount < 0:
@@ -87,7 +87,7 @@ class Economy:
         self.data["balances"][user_id] -= amount
         save_data(self.data)
         return True
-        
+
     def set_balance(self, user_id: str, amount: int) -> bool:
         """Set a user's balance to a specific amount."""
         if amount < 0:
@@ -96,7 +96,7 @@ class Economy:
         self.data["balances"][user_id] = amount
         save_data(self.data)
         return True
-        
+
     def transfer_balance(self, from_user: str, to_user: str, amount: int) -> bool:
         """Transfer balance between users. Returns False if insufficient funds."""
         if amount < 0:
@@ -105,41 +105,45 @@ class Economy:
             return False
         self.add_balance(to_user, amount)
         return True
-        
+
     def process_bet_results(self, results: Dict[str, Any]) -> None:
         """Process bet results and update balances accordingly."""
         user_results = results["user_results"]
-        
+
         # For winners, add their winnings (bet was already deducted)
         for user_id, result in user_results.items():
             current_balance = self.get_balance(user_id)
-            new_balance = current_balance + (result["winnings"] if result["winnings"] > 0 else 0)
+            new_balance = current_balance + (
+                result["winnings"] if result["winnings"] > 0 else 0
+            )
             self.set_balance(user_id, new_balance)
-            
+
         # Save changes
         save_data(self.data)
-        
-    def process_bet_placement(self, user_id: str, new_amount: int, old_amount: int = 0) -> bool:
+
+    def process_bet_placement(
+        self, user_id: str, new_amount: int, old_amount: int = 0
+    ) -> bool:
         """Process a bet placement, handling refunds and deductions.
-        
+
         Args:
             user_id: The ID of the user placing the bet
             new_amount: The amount of the new bet
             old_amount: The amount of any previous bet to refund (default 0)
-            
+
         Returns:
             True if successful, False if insufficient funds
         """
         current_balance = self.get_balance(user_id)
         required_amount = new_amount - old_amount
-        
+
         if required_amount > current_balance:
             return False
-            
+
         # If there was a previous bet, refund it
         if old_amount > 0:
             self.add_balance(user_id, old_amount)
-            
+
         # Deduct the new bet amount
         self.remove_balance(user_id, new_amount)
         return True
@@ -151,7 +155,7 @@ class BetState:
     def __init__(self, data: Data):
         self.data = data
         self.economy = Economy(data)
-        
+
     def get_betting_session(self) -> BettingSession:
         """Get current betting session state."""
         return {
@@ -160,13 +164,13 @@ class BetState:
             "open": self.is_open,
             "locked": self.is_locked,
         }
-        
+
     def get_emoji_config(self) -> Dict[str, List[str]]:
         return {
             "contestant_1_emojis": self.data.get("contestant_1_emojis", []),
-            "contestant_2_emojis": self.data.get("contestant_2_emojis", [])
+            "contestant_2_emojis": self.data.get("contestant_2_emojis", []),
         }
-        
+
     def get_reaction_amounts(self) -> Dict[str, int]:
         return self.data.get("reaction_bet_amounts", {})
 
@@ -207,50 +211,51 @@ class BetState:
         """
         # Calculate pot totals
         total_pot = sum(bet["amount"] for bet in self.bets.values())
-        
+
         # Initialize results
         user_results: Dict[str, UserResult] = {}
         winning_users: List[str] = []
         losing_users: List[str] = []
-        
+
         if not winner_name:  # Pot is lost
             winning_pot = 0
             bets_on_winner = 0
-            
+
             # Everyone loses their bets (which were already deducted)
             for user_id, bet_info in self.bets.items():
                 bet_amount = bet_info["amount"]
                 current_balance = self.economy.get_balance(user_id)
-                
+
                 user_results[user_id] = {
                     "winnings": 0,
                     "bet_amount": bet_amount,
                     "new_balance": current_balance,  # No change needed, bet already deducted
-                    "net_change": -bet_amount  # They lost their bet
+                    "net_change": -bet_amount,  # They lost their bet
                 }
                 losing_users.append(user_id)
-                
+
         else:  # We have a winner
             winner_name_lower = winner_name.lower()
-            
+
             # Calculate winning pot and count winning bets
             winning_pot = sum(
                 bet["amount"]
                 for bet in self.bets.values()
                 if bet["choice"].lower() == winner_name_lower
             )
-            
+
             bets_on_winner = sum(
-                1 for bet in self.bets.values()
+                1
+                for bet in self.bets.values()
                 if bet["choice"].lower() == winner_name_lower
             )
-            
+
             # Calculate individual results
             for user_id, bet_info in self.bets.items():
                 bet_amount = bet_info["amount"]
                 current_balance = self.economy.get_balance(user_id)
                 is_winner = bet_info["choice"].lower() == winner_name_lower
-                
+
                 if is_winner and winning_pot > 0:
                     # Calculate winner's share of the total pot
                     winning_amount = int((bet_amount / winning_pot) * total_pot)
@@ -262,21 +267,21 @@ class BetState:
                     net_change = -bet_amount
                     new_balance = current_balance
                     losing_users.append(user_id)
-                
+
                 user_results[user_id] = {
                     "winnings": winning_amount,
                     "bet_amount": bet_amount,
                     "new_balance": new_balance,
-                    "net_change": net_change
+                    "net_change": net_change,
                 }
-        
+
         return {
             "total_pot": total_pot,
             "winning_pot": winning_pot,
             "bets_on_winner": bets_on_winner,
             "user_results": user_results,
             "winning_users": winning_users,
-            "losing_users": losing_users
+            "losing_users": losing_users,
         }
 
     def get_total_pot(self) -> int:
@@ -346,14 +351,15 @@ class BetState:
         """Places or updates a bet for a user."""
         if not self.is_open or self.is_locked:
             return False
-            
+
         # Get the old bet amount for refund calculation
         old_amount = self.bets.get(user_id, {}).get("amount", 0)
-        
-        # Process the bet through the economy system (handles validation and balance updates)
+
+        # Process the bet through the economy system (handles validation and
+        # balance updates)
         if not self.economy.process_bet_placement(user_id, amount, old_amount):
             return False
-            
+
         # Record the new bet
         self.data["betting"]["bets"][user_id] = {
             "amount": amount,
@@ -381,10 +387,10 @@ class BetState:
         """
         # Calculate round results
         results = self.calculate_round_results(winner_name)
-        
+
         # Process results through the economy system
         self.economy.process_bet_results(results)
-        
+
         # Reset betting state
         self.data["betting"] = {
             "open": False,
@@ -398,7 +404,7 @@ class BetState:
             "name": winner_name if winner_name else "",
             "total_pot": results["total_pot"],
             "winning_pot": results["winning_pot"],
-            "user_results": results["user_results"]
+            "user_results": results["user_results"],
         }
 
     async def _send_embed(

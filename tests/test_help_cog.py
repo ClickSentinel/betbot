@@ -46,7 +46,7 @@ class TestHelpCog:
 
         # Should send embed with general help
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         assert "BetBot Commands" in embed_call.title
         assert "bet" in embed_call.description.lower()
 
@@ -57,7 +57,7 @@ class TestHelpCog:
 
         # Should send embed with specific command help
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         assert "help" in embed_call.title.lower()
 
     @pytest.mark.asyncio
@@ -67,7 +67,7 @@ class TestHelpCog:
 
         # Should send error or fallback message
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         # Should contain some form of error or unknown command message
         assert embed_call is not None
 
@@ -78,7 +78,7 @@ class TestHelpCog:
 
         # Should send embed with admin commands (or guild-only message)
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         assert "Help" in embed_call.title
         # Admin help either shows commands or guild-only error
         description = embed_call.description.lower()
@@ -91,7 +91,7 @@ class TestHelpCog:
 
         # Should send properly formatted embed
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         assert embed_call.title is not None
         assert embed_call.description is not None
         assert embed_call.color is not None
@@ -103,10 +103,15 @@ class TestHelpCog:
 
         # Should include admin help information
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         # Help should contain admin commands or guild restriction message
         description = embed_call.description.lower()
-        assert "give" in description or "take" in description or "admin" in description or "server channel" in description
+        assert (
+            "give" in description
+            or "take" in description
+            or "admin" in description
+            or "server channel" in description
+        )
 
     @pytest.mark.asyncio
     async def test_help_explains_betting_mechanics(self, help_cog, mock_ctx):
@@ -115,7 +120,7 @@ class TestHelpCog:
 
         # Should explain betting system
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         description = embed_call.description.lower()
         assert "bet" in description
 
@@ -126,7 +131,7 @@ class TestHelpCog:
 
         # Should use consistent embed color
         mock_ctx.send.assert_called_once()
-        embed_call = mock_ctx.send.call_args[1]['embed']
+        embed_call = mock_ctx.send.call_args[1]["embed"]
         assert embed_call.color is not None
         # Color should be an integer (Discord color value)
         assert isinstance(embed_call.color, (int, discord.Color))
@@ -134,6 +139,6 @@ class TestHelpCog:
     def test_help_cog_initialization(self, help_cog):
         """Test that Help cog initializes correctly."""
         assert help_cog is not None
-        assert hasattr(help_cog, 'help_command')
-        assert hasattr(help_cog, 'admin_help_command')
+        assert hasattr(help_cog, "help_command")
+        assert hasattr(help_cog, "admin_help_command")
         assert help_cog.bot is not None

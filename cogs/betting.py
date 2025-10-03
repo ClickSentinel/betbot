@@ -1,5 +1,4 @@
 import discord
-import discord.utils
 from discord.ext import commands
 from typing import Optional, Tuple, Dict, Any
 import asyncio
@@ -7,7 +6,7 @@ import time
 
 # Add enhanced logging
 from utils.logger import logger
-from utils.performance_monitor import performance_monitor, performance_timer
+from utils.performance_monitor import performance_monitor
 from utils.betting_timer import BettingTimer
 from utils.betting_utils import BettingPermissions, BettingUtils
 
@@ -21,7 +20,6 @@ from config import (
     COLOR_WARNING,
     COLOR_SUCCESS,
     BET_TIMER_DURATION,
-    BET_TIMER_UPDATE_INTERVAL,
     # Centralized Messages
     MSG_BET_ALREADY_OPEN,
     MSG_BET_LOCKED,
@@ -47,16 +45,12 @@ from config import (
     TITLE_BETTING_CHANNEL_SET,
     TITLE_TIMER_TOGGLED,
     TITLE_CURRENT_BETS_OVERVIEW,
-    ROLE_BETBOY,
     TITLE_LIVE_BETTING_ROUND,
-    TITLE_POT_LOST,
     MSG_NO_ACTIVE_BET_AND_MISSING_ARGS,
     TITLE_NO_OPEN_BETTING_ROUND,
     MSG_PLACE_MANUAL_BET_INSTRUCTIONS,
     MSG_INVALID_OPENBET_FORMAT,
-    MSG_BET_CHANGED,
     MSG_BET_LOCKED_WITH_LIVE_LINK,
-    TITLE_INSUFFICIENT_FUNDS,
 )
 from data_manager import load_data, save_data, ensure_user, Data
 from utils.live_message import (
@@ -82,63 +76,90 @@ class Betting(commands.Cog):
         self.timer = BettingTimer(bot)
         data = load_data()
         self.bet_state = BetState(data)
-        
+
         # Initialize the live message scheduler
         initialize_live_message_scheduler(bot)
-        
+
         # Track programmatic reaction removals to prevent race conditions
         self._programmatic_removals: set = set()
         self._programmatic_removals_timestamps: dict = {}
-        
+
         # Setup reaction debug logging
         import os
-        self.reaction_log_file = os.path.join(os.path.dirname(__file__), '..', 'logs', 'reaction_debug.log')
+
+        self.reaction_log_file = os.path.join(
+            os.path.dirname(__file__), "..", "logs", "reaction_debug.log"
+        )
         # Create logs directory if it doesn't exist
         os.makedirs(os.path.dirname(self.reaction_log_file), exist_ok=True)
-        
+
         # Track pending reaction bets for batching multiple rapid reactions
-        self._pending_reaction_bets: Dict[int, Dict[str, Any]] = {}  # user_id -> pending bet info
-        self._reaction_timers: Dict[int, asyncio.Task] = {}  # user_id -> timer task
+        # user_id -> pending bet info
+        self._pending_reaction_bets: Dict[int, Dict[str, Any]] = {}
+        # user_id -> timer task
+        self._reaction_timers: Dict[int, asyncio.Task] = {}
+
+        # Track users currently in reaction cleanup phase
+        # user_ids currently having reactions cleaned up
+        self._users_in_cleanup: set = set()
+
+        # Queue for reactions that arrive during cleanup phase
+        # user_id -> latest deferred reaction info
+        self._deferred_reactions: Dict[int, Dict[str, Any]] = {}
+
+        # Sequence counter to handle async delivery timing issues
+        self._reaction_sequence: int = 0
+
+        # Track last enforcement time per user to prevent spam
+        self._last_enforcement: Dict[int, float] = {}  # user_id -> timestamp
 
     def _log_reaction_debug(self, message: str) -> None:
         """Log reaction debug messages to both console and file."""
         import datetime
-        
+
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         formatted_message = f"[{timestamp}] {message}"
-        
+
         # Print to console
         print(formatted_message)
-        
+
         # Write to debug log file
         try:
-            with open(self.reaction_log_file, 'a', encoding='utf-8') as f:
-                f.write(formatted_message + '\n')
+            with open(self.reaction_log_file, "a", encoding="utf-8") as f:
+                f.write(formatted_message + "\n")
                 f.flush()  # Ensure immediate write
         except Exception as e:
             print(f"Error writing to reaction debug log: {e}")
 
     # --- Helper Methods for Deduplication ---
-    
+
     def _create_removal_key(self, message_id: int, user_id: int, emoji: str) -> str:
         """Create a unique key for tracking programmatic reaction removals."""
         return f"{message_id}:{user_id}:{emoji}"
-    
-    def _mark_programmatic_removal(self, message_id: int, user_id: int, emoji: str) -> None:
+
+    def _mark_programmatic_removal(
+        self, message_id: int, user_id: int, emoji: str
+    ) -> None:
         """Mark a reaction removal as programmatic to avoid processing it as user-initiated."""
         key = self._create_removal_key(message_id, user_id, emoji)
         current_time = time.time()
         self._programmatic_removals.add(key)
         self._programmatic_removals_timestamps[key] = current_time
-        
+
         # Clean up old entries (older than 30 seconds)
         cutoff_time = current_time - 30
-        old_keys = [k for k, t in self._programmatic_removals_timestamps.items() if t < cutoff_time]
+        old_keys = [
+            k
+            for k, t in self._programmatic_removals_timestamps.items()
+            if t < cutoff_time
+        ]
         for old_key in old_keys:
             self._programmatic_removals.discard(old_key)
             self._programmatic_removals_timestamps.pop(old_key, None)
-    
-    def _is_programmatic_removal(self, message_id: int, user_id: int, emoji: str) -> bool:
+
+    def _is_programmatic_removal(
+        self, message_id: int, user_id: int, emoji: str
+    ) -> bool:
         """Check if a reaction removal is programmatic and remove it from tracking."""
         key = self._create_removal_key(message_id, user_id, emoji)
         if key in self._programmatic_removals:
@@ -148,56 +169,86 @@ class Betting(commands.Cog):
         return False
 
     # --- Reaction Batching Methods ---
-    
+
     def _cancel_user_reaction_timer(self, user_id: int) -> None:
         """Cancel any existing reaction timer for a user."""
         if user_id in self._reaction_timers:
-            self._log_reaction_debug(f"🔍 CANCEL TIMER: Cancelling existing timer for user {user_id}")
+            self._log_reaction_debug(
+                f"🔍 CANCEL TIMER: Cancelling existing timer for user {user_id}"
+            )
             task = self._reaction_timers[user_id]
             if not task.done():
                 try:
                     task.cancel()
-                    self._log_reaction_debug(f"🔍 CANCEL TIMER: Successfully cancelled timer for user {user_id}")
+                    self._log_reaction_debug(
+                        f"🔍 CANCEL TIMER: Successfully cancelled timer for user {user_id}"
+                    )
                 except Exception as e:
-                    self._log_reaction_debug(f"🔍 CANCEL TIMER: Error cancelling timer for user {user_id}: {e}")
+                    self._log_reaction_debug(
+                        f"🔍 CANCEL TIMER: Error cancelling timer for user {user_id}: {e}"
+                    )
             else:
-                self._log_reaction_debug(f"🔍 CANCEL TIMER: Timer for user {user_id} was already done")
+                self._log_reaction_debug(
+                    f"🔍 CANCEL TIMER: Timer for user {user_id} was already done"
+                )
             # Always remove from tracking dict, even if cancel failed
             del self._reaction_timers[user_id]
-            self._log_reaction_debug(f"🔍 CANCEL TIMER: Removed timer from tracking for user {user_id}")
+            self._log_reaction_debug(
+                f"🔍 CANCEL TIMER: Removed timer from tracking for user {user_id}"
+            )
         else:
-            self._log_reaction_debug(f"🔍 CANCEL TIMER: No existing timer to cancel for user {user_id}")
-    
+            self._log_reaction_debug(
+                f"🔍 CANCEL TIMER: No existing timer to cancel for user {user_id}"
+            )
+
     async def _process_batched_reaction(self, user_id: int) -> None:
         """Process the final batched reaction after the delay period."""
-        self._log_reaction_debug(f"🔍 PROCESS BATCH: Processing batched reaction for user {user_id}")
+        self._log_reaction_debug(
+            f"🔍 PROCESS BATCH: Processing batched reaction for user {user_id}"
+        )
         try:
             # Remove the timer from tracking
             self._reaction_timers.pop(user_id, None)
-            self._log_reaction_debug(f"🔍 PROCESS BATCH: Removed timer for user {user_id}")
-            
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: Removed timer for user {user_id}"
+            )
+
             # Get the pending bet info
             if user_id not in self._pending_reaction_bets:
-                self._log_reaction_debug(f"🔍 PROCESS BATCH: No pending bet for user {user_id}, nothing to do")
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BATCH: No pending bet for user {user_id}, nothing to do"
+                )
                 return  # No pending bet, nothing to do
-            
+
             bet_info = self._pending_reaction_bets.pop(user_id)
-            self._log_reaction_debug(f"🔍 PROCESS BATCH: Retrieved pending bet info for user {user_id}")
-            
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: Retrieved pending bet info for user {user_id}"
+            )
+
             # Extract the bet information
             message = bet_info["message"]
             user = bet_info["user"]
             data = bet_info["data"]
+            channel = bet_info["channel"]
+
+            # Extract the bet information from the stored data
+            # The batching system already captured the latest reaction that
+            # arrived
             contestant_name = bet_info["contestant_name"]
             bet_amount = bet_info["bet_amount"]
             final_emoji = bet_info["emoji"]
-            channel = bet_info["channel"]
-            
-            self._log_reaction_debug(f"🔍 PROCESS BATCH: Final bet details - {contestant_name} for {bet_amount} coins, emoji {final_emoji}")
-            
+            sequence = bet_info.get("sequence", "unknown")
+            timestamp = bet_info.get("timestamp", 0)
+
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: Final bet details - {contestant_name} for {bet_amount} coins, emoji {final_emoji} (sequence: {sequence}, timestamp: {timestamp:.3f})"
+            )
+
             # Process the final bet
             user_id_str = str(user.id)
-            self._log_reaction_debug(f"🔍 PROCESS BATCH: Calling _process_bet for user {user_id_str}")
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: Calling _process_bet for user {user_id_str}"
+            )
             success = await self._process_bet(
                 channel=channel if isinstance(channel, discord.TextChannel) else None,
                 data=data,
@@ -207,72 +258,232 @@ class Betting(commands.Cog):
                 emoji=final_emoji,
                 notify_user=False,  # Don't send notification messages for reaction bets
             )
-            self._log_reaction_debug(f"🔍 PROCESS BATCH: _process_bet returned success={success}")
-            
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: _process_bet returned success={success}"
+            )
+
             # Always clean up old reactions, but behavior depends on success
+            # Mark user as in cleanup to defer any new reactions during this
+            # process
+            self._users_in_cleanup.add(user_id)
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: User {user_id} marked as in cleanup phase"
+            )
+
             if success:
-                self._log_reaction_debug(f"🔍 PROCESS BATCH: Bet successful, removing other reactions (keeping {final_emoji})")
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BATCH: Bet successful, removing other reactions (keeping {final_emoji})"
+                )
                 # Remove all OTHER betting reactions from the user, but keep the final one
-                # The final emoji is already on the message from Discord, so we just exclude it from removal
+                # The final emoji is already on the message from Discord, so we
+                # just exclude it from removal
                 await self._remove_user_betting_reactions(
                     message, user, data, exclude_emoji=final_emoji
                 )
-                self._log_reaction_debug(f"🔍 PROCESS BATCH: Reaction cleanup complete for successful bet")
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BATCH: Reaction cleanup complete for successful bet"
+                )
             else:
-                self._log_reaction_debug(f"🔍 PROCESS BATCH: Bet failed, removing ALL reactions including {final_emoji}")
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BATCH: Bet failed, removing ALL reactions including {final_emoji}"
+                )
                 # If bet failed, remove ALL reactions including the final one
                 await self._remove_user_betting_reactions(
                     message, user, data, exclude_emoji=None
                 )
-                self._log_reaction_debug(f"🔍 PROCESS BATCH: Reaction cleanup complete for failed bet")
-                
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BATCH: Reaction cleanup complete for failed bet"
+                )
+
+            # Remove user from cleanup phase - new reactions can now be
+            # processed
+            self._users_in_cleanup.discard(user_id)
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: User {user_id} removed from cleanup phase"
+            )
+
+            # Process any deferred reactions for this user
+            await self._process_deferred_reactions(user_id)
+
         except Exception as e:
-            self._log_reaction_debug(f"🔍 PROCESS BATCH: Error processing batched reaction for user {user_id}: {e}")
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: Error processing batched reaction for user {user_id}: {e}"
+            )
             # Clean up on error
             self._pending_reaction_bets.pop(user_id, None)
             self._reaction_timers.pop(user_id, None)
-    
+            # Also clean up cleanup tracking
+            self._users_in_cleanup.discard(user_id)
+            # Clean up any pending deferred reactions
+            self._deferred_reactions.pop(user_id, None)
+            self._log_reaction_debug(
+                f"🔍 PROCESS BATCH: User {user_id} removed from cleanup phase (error cleanup)"
+            )
+
     async def _delayed_reaction_processing(self, user_id: int) -> None:
         """Wait for a short delay, then process the batched reaction."""
-        self._log_reaction_debug(f"🔍 PRIMARY TIMER: Starting delayed processing for user {user_id}")
+        self._log_reaction_debug(
+            f"🔍 PRIMARY TIMER: Starting delayed processing for user {user_id}"
+        )
         try:
-            # Wait for 1 second to allow batching of multiple rapid reactions
-            self._log_reaction_debug(f"🔍 PRIMARY TIMER: Waiting 1 second for user {user_id}")
-            await asyncio.sleep(1.0)
-            self._log_reaction_debug(f"🔍 PRIMARY TIMER: Wait complete, processing batch for user {user_id}")
+            # Wait for 1.5 seconds to allow batching of multiple rapid
+            # reactions
+            self._log_reaction_debug(
+                f"🔍 PRIMARY TIMER: Waiting 1.5 seconds for user {user_id}"
+            )
+            await asyncio.sleep(1.5)
+            self._log_reaction_debug(
+                f"🔍 PRIMARY TIMER: Wait complete, processing batch for user {user_id}"
+            )
             # Process the final batched reaction
             await self._process_batched_reaction(user_id)
-            self._log_reaction_debug(f"🔍 PRIMARY TIMER: Batch processing complete for user {user_id}")
+            self._log_reaction_debug(
+                f"🔍 PRIMARY TIMER: Batch processing complete for user {user_id}"
+            )
         except asyncio.CancelledError:
-            self._log_reaction_debug(f"🔍 PRIMARY TIMER: Timer cancelled for user {user_id}")
-            # Timer was cancelled due to a new reaction, clean up
-            self._pending_reaction_bets.pop(user_id, None)
+            self._log_reaction_debug(
+                f"🔍 PRIMARY TIMER: Timer cancelled for user {user_id}"
+            )
+            # Timer was cancelled due to a new reaction
+            # DO NOT clean up pending bets here - the new timer needs that
+            # data!
             raise
         except Exception as e:
-            self._log_reaction_debug(f"🔍 PRIMARY TIMER: Error in delayed reaction processing for user {user_id}: {e}")
+            self._log_reaction_debug(
+                f"🔍 PRIMARY TIMER: Error in delayed reaction processing for user {user_id}: {e}"
+            )
             # Clean up on error
             self._pending_reaction_bets.pop(user_id, None)
             self._reaction_timers.pop(user_id, None)
 
     async def _backup_reaction_processing(self, user_id: int, delay: float) -> None:
         """Backup processing to ensure bets don't get lost due to timer issues."""
-        self._log_reaction_debug(f"🔍 BACKUP TIMER: Starting backup processing for user {user_id} with {delay}s delay")
+        self._log_reaction_debug(
+            f"🔍 BACKUP TIMER: Starting backup processing for user {user_id} with {delay}s delay"
+        )
         try:
             await asyncio.sleep(delay)
-            self._log_reaction_debug(f"🔍 BACKUP TIMER: Backup delay complete for user {user_id}")
+            self._log_reaction_debug(
+                f"🔍 BACKUP TIMER: Backup delay complete for user {user_id}"
+            )
             # Check if the user still has a pending bet that wasn't processed
             has_pending = user_id in self._pending_reaction_bets
             has_timer = user_id in self._reaction_timers
-            self._log_reaction_debug(f"🔍 BACKUP TIMER: User {user_id} - has_pending={has_pending}, has_timer={has_timer}")
-            
+            self._log_reaction_debug(
+                f"🔍 BACKUP TIMER: User {user_id} - has_pending={has_pending}, has_timer={has_timer}"
+            )
+
             if has_pending and not has_timer:
-                self._log_reaction_debug(f"⚠️ BACKUP TIMER: Primary timer failed for user {user_id}, processing backup bet")
+                self._log_reaction_debug(
+                    f"⚠️ BACKUP TIMER: Primary timer failed for user {user_id}, processing backup bet"
+                )
                 await self._process_batched_reaction(user_id)
             else:
-                self._log_reaction_debug(f"🔍 BACKUP TIMER: Primary timer handled user {user_id}, no backup needed")
+                self._log_reaction_debug(
+                    f"🔍 BACKUP TIMER: Primary timer handled user {user_id}, no backup needed"
+                )
             # If primary timer is still running, let it handle the processing
         except Exception as e:
-            self._log_reaction_debug(f"🔍 BACKUP TIMER: Error in backup reaction processing for user {user_id}: {e}")
+            self._log_reaction_debug(
+                f"🔍 BACKUP TIMER: Error in backup reaction processing for user {user_id}: {e}"
+            )
+
+    async def _process_deferred_reactions(self, user_id: int) -> None:
+        """Process any reactions that were deferred during cleanup phase."""
+        if user_id not in self._deferred_reactions:
+            self._log_reaction_debug(
+                f"🔍 DEFERRED: No deferred reactions for user {user_id}"
+            )
+            return
+
+        deferred = self._deferred_reactions.pop(user_id)
+        self._log_reaction_debug(
+            f"🔍 DEFERRED: Processing deferred reaction for user {user_id}: {
+                deferred['contestant_name']} for {
+                deferred['bet_amount']} coins"
+        )
+
+        try:
+            # Extract the stored information
+            payload = deferred["payload"]
+            message = deferred["message"]
+            user = deferred["user"]
+            contestant_name = deferred["contestant_name"]
+            bet_amount = deferred["bet_amount"]
+            channel = deferred["channel"]
+
+            # Refresh data to get current state
+            current_data = load_data()
+
+            # Re-check if betting is still open
+            if not current_data["betting"]["open"]:
+                self._log_reaction_debug(
+                    f"🔍 DEFERRED: Betting is now closed, removing deferred reaction"
+                )
+                await message.remove_reaction(payload.emoji, user)
+                return
+
+            # Re-check user balance (it may have changed)
+            ensure_user(current_data, str(user.id))
+            current_balance = current_data["balances"][str(user.id)]
+            if bet_amount > current_balance:
+                self._log_reaction_debug(
+                    f"🔍 DEFERRED: Insufficient balance for deferred reaction, removing"
+                )
+                await message.remove_reaction(payload.emoji, user)
+                shortfall = bet_amount - current_balance
+                embed = discord.Embed(
+                    title="❌ Insufficient Funds",
+                    description=f"<@{user.id}> 💰 **Your balance:** `{current_balance}` coins\n💸 **Reaction bet:** `{bet_amount}` coins\n❌ **You need:** `{shortfall}` more coins",
+                    color=COLOR_ERROR,
+                )
+                await channel.send(embed=embed)
+                return
+
+            self._log_reaction_debug(
+                f"🔍 DEFERRED: Starting batching system for deferred reaction of user {
+                    user.id}"
+            )
+
+            # Now process the deferred reaction using the normal batching system
+            # Cancel any existing timer for this user (shouldn't be any, but be
+            # safe)
+            self._cancel_user_reaction_timer(user.id)
+
+            # Store the pending bet with sequence info from deferred reaction
+            sequence = deferred.get("sequence", 0)
+            timestamp = deferred.get("timestamp", 0)
+
+            self._pending_reaction_bets[user.id] = {
+                "message": message,
+                "user": user,
+                "data": current_data,  # Use refreshed data
+                "contestant_name": contestant_name,
+                "bet_amount": bet_amount,
+                "emoji": str(payload.emoji),
+                "channel": channel,
+                "raw_emoji": payload.emoji,
+                "sequence": sequence,
+                "timestamp": timestamp,
+            }
+
+            # Start the timers
+            primary_task = asyncio.create_task(
+                self._delayed_reaction_processing(user.id)
+            )
+            # Backup task runs independently - intentionally not stored
+            asyncio.create_task(self._backup_reaction_processing(user.id, 3.0))
+            self._reaction_timers[user.id] = primary_task
+
+            self._log_reaction_debug(
+                f"🔍 DEFERRED: Successfully started processing for deferred reaction of user {
+                    user.id}"
+            )
+
+        except Exception as e:
+            self._log_reaction_debug(
+                f"🔍 DEFERRED: Error processing deferred reaction for user {user_id}: {e}"
+            )
 
     async def _check_permission(self, ctx: commands.Context, action: str) -> bool:
         """Centralized permission check for betting actions."""
@@ -284,45 +495,146 @@ class Betting(commands.Cog):
         """Sends a consistent embed message."""
         await BettingUtils.send_embed(ctx, title, description, color)
 
-    def _find_fuzzy_contestant(self, data: Data, input_name: str) -> Optional[Tuple[str, str]]:
+    def _find_fuzzy_contestant(
+        self, data: Data, input_name: str
+    ) -> Optional[Tuple[str, str]]:
         """Find contestant with fuzzy matching for typo tolerance."""
         contestants = data["betting"].get("contestants", {})
         if not contestants:
             return None
-            
+
         input_lower = input_name.lower().strip()
-        
+
         # First try exact match (case insensitive)
         for contestant_id, name in contestants.items():
             if name.lower() == input_lower:
                 return contestant_id, name
-        
+
         # Then try partial match (starts with)
         matches = []
         for contestant_id, name in contestants.items():
             if name.lower().startswith(input_lower):
                 matches.append((contestant_id, name))
-        
+
         # If exactly one partial match, use it
         if len(matches) == 1:
             return matches[0]
-            
+
         # Try contains match if no partial matches
         if not matches:
             for contestant_id, name in contestants.items():
                 if input_lower in name.lower():
                     matches.append((contestant_id, name))
-                    
+
         # If exactly one contains match, use it
         if len(matches) == 1:
             return matches[0]
-            
+
         # No unique match found
         return None
 
     def _clear_timer_state_in_data(self, data: Data) -> None:
         """Clears timer-related data. Note: Does not save data - caller must save."""
         data["timer_end_time"] = None
+
+    async def _enforce_single_reaction_per_user(
+        self, message: discord.Message, user: discord.User, data: Data, keep_emoji: str
+    ) -> None:
+        """Ensures user only has one betting reaction on the message - removes all others except keep_emoji"""
+
+        # Rate limit enforcement to prevent spam (max once per 2 seconds per
+        # user)
+        import time
+
+        current_time = time.time()
+        last_enforcement = self._last_enforcement.get(user.id, 0)
+
+        if current_time - last_enforcement < 2.0:
+            self._log_reaction_debug(
+                f"🔍 ENFORCE SINGLE: Rate limited for user {
+                    user.id} (last: {
+                    current_time -
+                    last_enforcement:.1f}s ago)"
+            )
+            return
+
+        self._last_enforcement[user.id] = current_time
+        self._log_reaction_debug(
+            f"🔍 ENFORCE SINGLE: Cleaning up reactions for user {
+                user.id}, keeping {keep_emoji}"
+        )
+
+        try:
+            # Get fresh message to see current reactions
+            fresh_message = await message.channel.fetch_message(message.id)
+
+            reactions_to_remove = []
+            for reaction in fresh_message.reactions:
+                emoji_str = str(reaction.emoji)
+
+                # Skip if this is the emoji we want to keep
+                if emoji_str == keep_emoji:
+                    self._log_reaction_debug(
+                        f"🔍 ENFORCE SINGLE: Keeping reaction {emoji_str}"
+                    )
+                    continue
+
+                # Check if this is a betting emoji
+                contestant_id = _get_contestant_from_emoji(data, emoji_str)
+                if not contestant_id:
+                    continue  # Not a betting emoji, ignore
+
+                # Check if user has reacted with this emoji
+                user_has_this_reaction = False
+                async for reaction_user in reaction.users():
+                    if reaction_user.id == user.id:
+                        user_has_this_reaction = True
+                        break
+
+                if user_has_this_reaction:
+                    reactions_to_remove.append((reaction, emoji_str))
+                    self._log_reaction_debug(
+                        f"🔍 ENFORCE SINGLE: Will remove user reaction {emoji_str}"
+                    )
+
+            # Remove the unwanted reactions
+            for reaction, emoji_str in reactions_to_remove:
+                try:
+                    await reaction.remove(user)
+                    self._log_reaction_debug(
+                        f"🔍 ENFORCE SINGLE: Removed user reaction {emoji_str}"
+                    )
+                except discord.NotFound:
+                    self._log_reaction_debug(
+                        f"🔍 ENFORCE SINGLE: Reaction {emoji_str} already removed"
+                    )
+                except discord.HTTPException as e:
+                    if "Unknown Message" in str(e) or "Unknown Emoji" in str(e):
+                        self._log_reaction_debug(
+                            f"🔍 ENFORCE SINGLE: Reaction {emoji_str} no longer exists: {e}"
+                        )
+                    else:
+                        self._log_reaction_debug(
+                            f"🔍 ENFORCE SINGLE: Failed to remove reaction {emoji_str}: {e}"
+                        )
+
+            if reactions_to_remove:
+                self._log_reaction_debug(
+                    f"🔍 ENFORCE SINGLE: Cleaned up {
+                        len(reactions_to_remove)} old reactions for user {
+                        user.id}"
+                )
+            else:
+                self._log_reaction_debug(
+                    f"🔍 ENFORCE SINGLE: No cleanup needed for user {
+                        user.id}"
+                )
+
+        except Exception as e:
+            self._log_reaction_debug(
+                f"🔍 ENFORCE SINGLE: Error during cleanup for user {
+                    user.id}: {e}"
+            )
 
     async def _process_bet(
         self,
@@ -337,11 +649,19 @@ class Betting(commands.Cog):
         """Centralized bet processing logic.
         Returns True if bet was successful, False otherwise."""
 
+        self._log_reaction_debug(
+            f"🔍 PROCESS BET: Starting _process_bet for user {user_id}, amount={amount}, choice={choice}, emoji={emoji}"
+        )
+
         # Ensure the user has an account and validate their balance
         ensure_user(data, user_id)
         user_balance = data["balances"][user_id]
+        self._log_reaction_debug(f"🔍 PROCESS BET: User balance: {user_balance}")
 
         if amount <= 0:
+            self._log_reaction_debug(
+                f"🔍 PROCESS BET: Failed - invalid amount: {amount}"
+            )
             if notify_user and channel:
                 await channel.send(
                     embed=discord.Embed(
@@ -365,6 +685,9 @@ class Betting(commands.Cog):
             )
 
         if amount > user_balance:
+            self._log_reaction_debug(
+                f"🔍 PROCESS BET: Failed - insufficient funds: amount={amount}, balance={user_balance}"
+            )
             if notify_user and channel:
                 shortfall = amount - user_balance
                 await channel.send(
@@ -379,20 +702,25 @@ class Betting(commands.Cog):
         # Find and validate contestant
         contestant_info = self._find_contestant_info(data, choice)
         if not contestant_info:
+            self._log_reaction_debug(
+                f"🔍 PROCESS BET: Failed - contestant not found: {choice}"
+            )
             if notify_user and channel:
                 # Generate helpful error message with available contestants
                 contestants = data["betting"].get("contestants", {})
                 if contestants:
-                    contestants_list = "\n".join([f"• **{name}**" for name in contestants.values()])
+                    contestants_list = "\n".join(
+                        [f"• **{name}**" for name in contestants.values()]
+                    )
                     example_contestant = list(contestants.values())[0]
                     error_msg = MSG_UNKNOWN_CONTESTANT.format(
                         contestant_name=choice,
                         contestants_list=contestants_list,
-                        example_contestant=example_contestant
+                        example_contestant=example_contestant,
                     )
                 else:
                     error_msg = "No betting round is currently active."
-                
+
                 await channel.send(
                     embed=discord.Embed(
                         title=TITLE_BETTING_ERROR,
@@ -404,26 +732,44 @@ class Betting(commands.Cog):
 
         contestant_id, contestant_name = contestant_info
 
-        # Check if user has an existing bet with an emoji (reaction bet) and this is a manual bet
+        # Check if user has an existing bet with an emoji (reaction bet) and
+        # this is a manual bet
         existing_bet = data["betting"]["bets"].get(user_id)
         old_emoji = existing_bet.get("emoji") if existing_bet else None
-        
-        # If placing a manual bet (no emoji) after a reaction bet (has emoji), remove the old reaction
+
+        # If placing a manual bet (no emoji) after a reaction bet (has emoji),
+        # remove the old reaction
         if old_emoji and not emoji:
             await self._remove_old_reaction_bet(data, user_id, old_emoji)
 
-        # Use BetState to handle bet placement which will handle refunds and balance updates
+        # Use BetState to handle bet placement which will handle refunds and
+        # balance updates
         bet_state = BetState(data)
-        if not bet_state.place_bet(user_id, amount, contestant_name, emoji):
-            logger.warning(f"Bet placement failed for user {user_id}: {amount} on {contestant_name}")
+        self._log_reaction_debug(
+            f"🔍 PROCESS BET: Calling bet_state.place_bet({user_id}, {amount}, {contestant_name}, {emoji})"
+        )
+        bet_result = bet_state.place_bet(user_id, amount, contestant_name, emoji)
+        self._log_reaction_debug(
+            f"🔍 PROCESS BET: bet_state.place_bet returned: {bet_result}"
+        )
+
+        if not bet_result:
+            self._log_reaction_debug(
+                f"🔍 PROCESS BET: Failed - bet_state.place_bet returned False"
+            )
+            logger.warning(
+                f"Bet placement failed for user {user_id}: {amount} on {contestant_name}"
+            )
             return False
 
         # Log successful bet placement
-        logger.info(f"Bet placed: User {user_id} bet {amount} coins on {contestant_name}")
-        performance_monitor.record_metric('bet.placed', 1, {
-            'contestant': contestant_name,
-            'amount': str(amount)
-        })
+        self._log_reaction_debug(f"🔍 PROCESS BET: Bet placement successful")
+        logger.info(
+            f"Bet placed: User {user_id} bet {amount} coins on {contestant_name}"
+        )
+        performance_monitor.record_metric(
+            "bet.placed", 1, {"contestant": contestant_name, "amount": str(amount)}
+        )
 
         # Schedule live message update (batched for better performance)
         schedule_live_message_update()
@@ -438,6 +784,9 @@ class Betting(commands.Cog):
                 )
             )
 
+        self._log_reaction_debug(
+            f"🔍 PROCESS BET: Returning True - bet processing complete"
+        )
         return True
 
     def _find_contestant_info(
@@ -448,7 +797,7 @@ class Betting(commands.Cog):
         fuzzy_result = self._find_fuzzy_contestant(data, choice_input)
         if fuzzy_result:
             return fuzzy_result
-        
+
         # Fall back to original method if no fuzzy match
         return BettingUtils.find_contestant_info(data, choice_input)
 
@@ -459,7 +808,7 @@ class Betting(commands.Cog):
         # Prioritize most commonly used reactions first (100 and 250 coin bets)
         c1_emojis = data["contestant_1_emojis"]
         c2_emojis = data["contestant_2_emojis"]
-        
+
         # Add reactions grouped by contestant for logical order
         priority_order = [
             c1_emojis[0],  # First contestant, 100 coins (🔥)
@@ -472,7 +821,7 @@ class Betting(commands.Cog):
             c2_emojis[2],  # Second contestant, 500 coins (🚀)
             c2_emojis[3],  # Second contestant, 1000 coins (👑)
         ]
-        
+
         # Add reactions with proper spacing to avoid rate limits
         for i, emoji in enumerate(priority_order):
             await self._add_single_reaction_with_retry(message, emoji)
@@ -492,11 +841,17 @@ class Betting(commands.Cog):
                 if "rate limited" in str(e).lower() or "429" in str(e):
                     if attempt < max_retries:
                         # Exponential backoff: 0.5s, 1.5s, 3s
-                        wait_time = 0.5 * (2 ** attempt)
-                        print(f"Rate limited adding reaction {emoji}, waiting {wait_time}s (attempt {attempt + 1})")
+                        wait_time = 0.5 * (2**attempt)
+                        print(
+                            f"Rate limited adding reaction {emoji}, waiting {wait_time}s (attempt {
+                                attempt + 1})"
+                        )
                         await asyncio.sleep(wait_time)
                     else:
-                        print(f"Failed to add reaction {emoji} after {max_retries + 1} attempts: {e}")
+                        print(
+                            f"Failed to add reaction {emoji} after {
+                                max_retries + 1} attempts: {e}"
+                        )
                         return
                 else:
                     print(f"Could not add reaction {emoji} to live message: {e}")
@@ -517,31 +872,51 @@ class Betting(commands.Cog):
         optionally excluding one emoji.
         Accepts discord.User or discord.Member (which inherits from User).
         """
-        # print(f"DEBUG: Attempting to remove reactions for user {user.name} (ID: {user.id}) on message {message.id}")
+        self._log_reaction_debug(
+            f"🔍 REMOVE REACTIONS: Starting cleanup for user {
+                user.id}, exclude_emoji={exclude_emoji}"
+        )
         all_betting_emojis = data["contestant_1_emojis"] + data["contestant_2_emojis"]
-        # print(f"DEBUG: All configured betting emojis: {all_betting_emojis}")
+        self._log_reaction_debug(
+            f"🔍 REMOVE REACTIONS: All betting emojis: {all_betting_emojis}"
+        )
+
         for emoji_str in all_betting_emojis:
             if emoji_str == exclude_emoji:
-                # print(f"DEBUG: Skipping removal of exclude_emoji: {emoji_str}")
+                self._log_reaction_debug(
+                    f"🔍 REMOVE REACTIONS: Skipping removal of exclude_emoji: {emoji_str}"
+                )
                 continue  # Skip the emoji that was just added
 
             try:
                 # Mark this removal as programmatic to prevent race condition
                 self._mark_programmatic_removal(message.id, user.id, emoji_str)
-                # print(f"DEBUG: Removing reaction: {emoji_str}")
+                self._log_reaction_debug(
+                    f"🔍 REMOVE REACTIONS: Removing reaction: {emoji_str}"
+                )
                 await message.remove_reaction(emoji_str, user)
-                # print(f"DEBUG: Successfully removed reaction: {emoji_str}")
+                self._log_reaction_debug(
+                    f"🔍 REMOVE REACTIONS: Successfully removed reaction: {emoji_str}"
+                )
             except discord.NotFound:
-                # print(f"DEBUG: Reaction {emoji_str} not found for user {user.name}, skipping.")
+                self._log_reaction_debug(
+                    f"🔍 REMOVE REACTIONS: Reaction {emoji_str} not found for user {
+                        user.name}, skipping"
+                )
                 # Remove the mark since the removal didn't happen
                 self._is_programmatic_removal(message.id, user.id, emoji_str)
-                pass
             except discord.HTTPException as e:
                 # Remove the mark since the removal failed
                 self._is_programmatic_removal(message.id, user.id, emoji_str)
-                print(
-                    f"ERROR: Failed to remove reaction {emoji_str} from user {user.name}: {e}"
+                self._log_reaction_debug(
+                    f"🔍 REMOVE REACTIONS: Failed to remove reaction {emoji_str} from user {
+                        user.name}: {e}"
                 )
+
+        self._log_reaction_debug(
+            f"🔍 REMOVE REACTIONS: Cleanup complete for user {
+                user.id}"
+        )
 
     async def _remove_old_reaction_bet(
         self, data: Data, user_id: str, old_emoji: str
@@ -553,17 +928,22 @@ class Betting(commands.Cog):
             print(f"ERROR: Could not fetch user {user_id} to remove old reaction: {e}")
             return
 
-        # Get live message info and remove reaction from both main and secondary messages
+        # Get live message info and remove reaction from both main and
+        # secondary messages
         main_msg_id, main_chan_id = get_live_message_info(data)
         secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
 
         # Remove from main message
         if main_msg_id and main_chan_id:
-            await self._remove_reaction_from_message(main_chan_id, main_msg_id, user, old_emoji)
+            await self._remove_reaction_from_message(
+                main_chan_id, main_msg_id, user, old_emoji
+            )
 
         # Remove from secondary message
         if secondary_msg_id and secondary_chan_id:
-            await self._remove_reaction_from_message(secondary_chan_id, secondary_msg_id, user, old_emoji)
+            await self._remove_reaction_from_message(
+                secondary_chan_id, secondary_msg_id, user, old_emoji
+            )
 
     async def _remove_reaction_from_message(
         self, channel_id: int, message_id: int, user: discord.abc.User, emoji: str
@@ -576,49 +956,59 @@ class Betting(commands.Cog):
 
             message = await channel.fetch_message(message_id)
             await message.remove_reaction(emoji, user)
-            print(f"DEBUG: Removed reaction {emoji} from user {user.name} on message {message_id}")
+            print(
+                f"DEBUG: Removed reaction {emoji} from user {
+                    user.name} on message {message_id}"
+            )
         except discord.NotFound:
             # Message or reaction not found, that's fine
             pass
         except discord.HTTPException as e:
-            print(f"ERROR: Failed to remove reaction {emoji} from user {user.name} on message {message_id}: {e}")
+            print(
+                f"ERROR: Failed to remove reaction {emoji} from user {
+                    user.name} on message {message_id}: {e}"
+            )
 
-    async def _create_payout_summary(self, winner_info: WinnerInfo, user_names: Dict[str, str]) -> str:
+    async def _create_payout_summary(
+        self, winner_info: WinnerInfo, user_names: Dict[str, str]
+    ) -> str:
         """Create a detailed summary of payouts for all users."""
         user_results = winner_info.get("user_results", {})
         if not user_results:
             return "No bets were placed in this round."
-        
+
         # Separate winners and losers
         winners = []
         losers = []
-        
+
         for user_id, result in user_results.items():
             user_name = user_names.get(user_id, f"Unknown User ({user_id})")
             net_change = result["net_change"]
             winnings = result["winnings"]
             bet_amount = result["bet_amount"]
-            
+
             if net_change > 0:
                 # Winner: show their winnings
-                winners.append(f"🏆 **{user_name}**: Bet `{bet_amount}` → Won `{winnings}` (Net: +`{net_change}`)")
+                winners.append(
+                    f"🏆 **{user_name}**: Bet `{bet_amount}` → Won `{winnings}` (Net: +`{net_change}`)"
+                )
             elif net_change == 0:
                 # Broke even (rare case)
                 winners.append(f"⚖️ **{user_name}**: Bet `{bet_amount}` → Broke even")
             else:
                 # Loser: show their loss
                 losers.append(f"💸 **{user_name}**: Lost `{bet_amount}` coins")
-        
+
         # Build the summary
         summary_parts = []
-        
+
         if winners:
             if len(winners) == 1:
                 summary_parts.append("### 🎉 Winner")
             else:
                 summary_parts.append("### 🎉 Winners")
             summary_parts.extend(winners)
-        
+
         if losers:
             if winners:
                 summary_parts.append("")  # Add spacing
@@ -627,7 +1017,7 @@ class Betting(commands.Cog):
             else:
                 summary_parts.append("### 💔 Unlucky Bettors")
             summary_parts.extend(losers)
-        
+
         return "\n".join(summary_parts)
 
     # Re-implemented _process_winner_declaration logic
@@ -668,20 +1058,29 @@ class Betting(commands.Cog):
         # Calculate statistics BEFORE processing winner (which clears bet data)
         total_bettors = len(data["betting"]["bets"])
         total_pot = sum(bet["amount"] for bet in data["betting"]["bets"].values())
-        bets_on_winner = sum(1 for bet in data["betting"]["bets"].values() 
-                           if bet["choice"].lower() == winner_name.lower())
-        
+        bets_on_winner = sum(
+            1
+            for bet in data["betting"]["bets"].values()
+            if bet["choice"].lower() == winner_name.lower()
+        )
+
         # Process winner through BetState
         winner_info = self.bet_state.declare_winner(winner_name)
-        
+
         # Log winner declaration
-        logger.info(f"Winner declared: {winner_name} - Total pot: {total_pot} coins, {total_bettors} bettors")
-        performance_monitor.record_metric('betting.winner_declared', 1, {
-            'winner': winner_name,
-            'total_pot': str(total_pot),
-            'total_bettors': str(total_bettors)
-        })
-        
+        logger.info(
+            f"Winner declared: {winner_name} - Total pot: {total_pot} coins, {total_bettors} bettors"
+        )
+        performance_monitor.record_metric(
+            "betting.winner_declared",
+            1,
+            {
+                "winner": winner_name,
+                "total_pot": str(total_pot),
+                "total_bettors": str(total_bettors),
+            },
+        )
+
         # Get user names for detailed payout message
         user_names = {}
         for user_id in winner_info["user_results"].keys():
@@ -692,10 +1091,10 @@ class Betting(commands.Cog):
                 user_names[user_id] = f"Unknown User ({user_id})"
             except Exception:
                 user_names[user_id] = f"User ({user_id})"
-        
+
         # Create detailed payout summary
         payout_details = await self._create_payout_summary(winner_info, user_names)
-        
+
         # Send comprehensive results message
         if bets_on_winner == 0:
             # No one bet on the winner
@@ -733,17 +1132,14 @@ class Betting(commands.Cog):
                     f"{payout_details}"
                 )
             embed_color = COLOR_SUCCESS
-        
+
         await self._send_embed(ctx, embed_title, embed_description, embed_color)
 
         # Update live message with detailed results
         await update_live_message(
-            self.bot,
-            data,
-            winner_declared=True,
-            winner_info=winner_info
+            self.bot, data, winner_declared=True, winner_info=winner_info
         )
-        
+
         # Also schedule batched update for consistency and any pending changes
         schedule_live_message_update()
 
@@ -754,15 +1150,14 @@ class Betting(commands.Cog):
     def _cancel_bet_timer(self):
         """Cancels the active betting timer task if it exists and clears its data."""
         self.timer.cancel_timer()
-        
+
         data = load_data()
         if data.get("timer_end_time") is not None:
             self._clear_timer_state_in_data(data)
-    
+
     async def _handle_timer_expired(self, ctx: commands.Context):
         """Handle when the betting timer expires."""
         await self._lock_bets_internal(ctx, timer_expired=True)
-
 
     async def _lock_bets_internal(
         self,
@@ -792,7 +1187,8 @@ class Betting(commands.Cog):
         if timer_expired:
             lock_summary = MSG_BETTING_TIMER_EXPIRED_SUMMARY
 
-        # Re-added functionality: Clear all reactions from live messages when bets are locked
+        # Re-added functionality: Clear all reactions from live messages when
+        # bets are locked
         main_msg_id, main_chan_id = get_live_message_info(data)
         secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
 
@@ -823,8 +1219,9 @@ class Betting(commands.Cog):
         await update_live_message(
             self.bot, data, betting_closed=True, close_summary=lock_summary
         )
-        
-        # Also schedule a batched update to handle any last-moment bets that might be pending
+
+        # Also schedule a batched update to handle any last-moment bets that
+        # might be pending
         schedule_live_message_update()
         if not silent_lock:  # Only send the locked message if not a silent lock
             await self._send_embed(
@@ -834,7 +1231,12 @@ class Betting(commands.Cog):
     # --- Discord Commands ---
 
     @commands.command(name="openbet", aliases=["ob"])
-    async def openbet(self, ctx: commands.Context, name1: Optional[str] = None, name2: Optional[str] = None) -> None:
+    async def openbet(
+        self,
+        ctx: commands.Context,
+        name1: Optional[str] = None,
+        name2: Optional[str] = None,
+    ) -> None:
         data = load_data()
 
         if not await self._check_permission(ctx, "open betting rounds"):
@@ -846,28 +1248,29 @@ class Betting(commands.Cog):
                 ctx, TITLE_BETTING_ERROR, MSG_INVALID_OPENBET_FORMAT, COLOR_ERROR
             )
             return
-        
+
         # Clean up the names by stripping whitespace
         name1 = name1.strip()
         name2 = name2.strip()
-        
+
         # Check if contestant names are identical (case-insensitive)
         if name1.lower() == name2.lower():
             await self._send_embed(
-                ctx, 
-                TITLE_BETTING_ERROR, 
-                "**Contestant names cannot be identical.**\nPlease provide two different contestant names.\nExample: `!openbet Alice Bob`", 
-                COLOR_ERROR
+                ctx,
+                TITLE_BETTING_ERROR,
+                "**Contestant names cannot be identical.**\nPlease provide two different contestant names.\nExample: `!openbet Alice Bob`",
+                COLOR_ERROR,
             )
             return
-            
-        # Check if contestant names are too long (Discord embed field limit considerations)
+
+        # Check if contestant names are too long (Discord embed field limit
+        # considerations)
         if len(name1) > 50 or len(name2) > 50:
             await self._send_embed(
                 ctx,
                 TITLE_BETTING_ERROR,
                 "**Contestant names are too long.**\nPlease keep contestant names under 50 characters each.\nExample: `!openbet Alice Bob`",
-                COLOR_ERROR
+                COLOR_ERROR,
             )
             return
 
@@ -898,11 +1301,13 @@ class Betting(commands.Cog):
         save_data(data)
 
         # Log betting round opened
-        logger.info(f"Betting round opened: {name1} vs {name2} by user {ctx.author}")
-        performance_monitor.record_metric('betting.round_opened', 1, {
-            'contestant1': name1,
-            'contestant2': name2
-        })
+        logger.info(
+            f"Betting round opened: {name1} vs {name2} by user {
+                ctx.author}"
+        )
+        performance_monitor.record_metric(
+            "betting.round_opened", 1, {"contestant1": name1, "contestant2": name2}
+        )
 
         main_chan_id = get_saved_bet_channel_id(data)
         target_channel: Optional[discord.TextChannel] = None
@@ -912,11 +1317,13 @@ class Betting(commands.Cog):
             if isinstance(channel_obj, discord.TextChannel):
                 target_channel = channel_obj
 
-        # If no valid saved text channel, try to use the context channel if it's a text channel
+        # If no valid saved text channel, try to use the context channel if
+        # it's a text channel
         if target_channel is None and isinstance(ctx.channel, discord.TextChannel):
             target_channel = ctx.channel
 
-        # If still no target_channel (e.g., ctx.channel is a DMChannel and no saved channel)
+        # If still no target_channel (e.g., ctx.channel is a DMChannel and no
+        # saved channel)
         if target_channel is None:
             await self._send_embed(
                 ctx,
@@ -945,7 +1352,8 @@ class Betting(commands.Cog):
             )
             set_live_message_info(data, main_live_msg.id, target_channel.id)
 
-            # update_live_message will now calculate remaining_time if not passed
+            # update_live_message will now calculate remaining_time if not
+            # passed
             await update_live_message(
                 self.bot, data
             )  # Call update_live_message here to populate the embed
@@ -958,10 +1366,12 @@ class Betting(commands.Cog):
             return
 
         if main_live_msg:
-            # Add reactions in the background to avoid blocking the betting round opening
+            # Add reactions in the background to avoid blocking the betting
+            # round opening
             self._add_reactions_background(main_live_msg, data)
 
-        # Only send a secondary message if ctx.channel is a TextChannel and different from target_channel
+        # Only send a secondary message if ctx.channel is a TextChannel and
+        # different from target_channel
         if (
             isinstance(ctx.channel, discord.TextChannel)
             and ctx.channel.id != target_channel.id
@@ -1001,11 +1411,15 @@ class Betting(commands.Cog):
                     f"Betting round opened for **{name1}** vs **{name2}**! Use `!lockbets` to close.",
                     COLOR_SUCCESS,
                 )
-        # If opened in the set bet channel, no additional message needed - live message provides all info
+        # If opened in the set bet channel, no additional message needed - live
+        # message provides all info
 
-        # Schedule the betting timer if enabled (moved here, after live message is set up)
+        # Schedule the betting timer if enabled (moved here, after live message
+        # is set up)
         if data["settings"]["enable_bet_timer"]:
-            await self.timer.start_timer(ctx, BET_TIMER_DURATION, self._handle_timer_expired)
+            await self.timer.start_timer(
+                ctx, BET_TIMER_DURATION, self._handle_timer_expired
+            )
 
     @commands.command(name="lockbets", aliases=["lb"])
     async def lock_bets(self, ctx: commands.Context) -> None:
@@ -1027,7 +1441,8 @@ class Betting(commands.Cog):
             return
 
         self._cancel_bet_timer()
-        await self._process_winner_declaration(ctx, data, winner)  # Updated call
+        # Updated call
+        await self._process_winner_declaration(ctx, data, winner)
 
     @commands.command(name="closebet", aliases=["cb"])
     async def close_bet(self, ctx: commands.Context, winner: str) -> None:
@@ -1048,7 +1463,8 @@ class Betting(commands.Cog):
         data = load_data()  # Reload data after locking
 
         self._cancel_bet_timer()
-        await self._process_winner_declaration(ctx, data, winner)  # Updated call
+        # Updated call
+        await self._process_winner_declaration(ctx, data, winner)
 
     @commands.command(name="setbetchannel", aliases=["sbc"])
     @commands.has_permissions(manage_guild=True)
@@ -1083,20 +1499,19 @@ class Betting(commands.Cog):
     async def toggle_bet_timer(self, ctx: commands.Context) -> None:
         if not await self._check_permission(ctx, "toggle betting timer"):
             return
-            
+
         data = load_data()
         data["settings"]["enable_bet_timer"] = not data["settings"]["enable_bet_timer"]
         save_data(data)
 
         status = "enabled" if data["settings"]["enable_bet_timer"] else "disabled"
-        
+
         # Log timer toggle
         logger.info(f"Betting timer {status} by user {ctx.author}")
-        performance_monitor.record_metric('betting.timer_toggled', 1, {
-            'status': status,
-            'user': str(ctx.author)
-        })
-        
+        performance_monitor.record_metric(
+            "betting.timer_toggled", 1, {"status": status, "user": str(ctx.author)}
+        )
+
         await self._send_embed(
             ctx,
             TITLE_TIMER_TOGGLED,
@@ -1143,14 +1558,19 @@ class Betting(commands.Cog):
                 )
                 if live_message_link:
                     await self._send_embed(
-                        ctx, 
-                        TITLE_BETTING_ERROR, 
-                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(live_link=live_message_link), 
-                        COLOR_ERROR
+                        ctx,
+                        TITLE_BETTING_ERROR,
+                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(
+                            live_link=live_message_link
+                        ),
+                        COLOR_ERROR,
                     )
                 else:
                     await self._send_embed(
-                        ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
+                        ctx,
+                        TITLE_BETTING_ERROR,
+                        MSG_BET_LOCKED_NO_NEW_BETS,
+                        COLOR_ERROR,
                     )
             else:
                 await self._send_embed(
@@ -1202,7 +1622,8 @@ class Betting(commands.Cog):
                     )
                     return
         else:
-            # Incorrect number of arguments (this block is now only reached if len(args) is not 0 or 2)
+            # Incorrect number of arguments (this block is now only reached if
+            # len(args) is not 0 or 2)
             await self._send_embed(
                 ctx, TITLE_INVALID_BET_FORMAT, MSG_INVALID_BET_FORMAT, COLOR_ERROR
             )
@@ -1223,19 +1644,19 @@ class Betting(commands.Cog):
             # Generate helpful error message with available contestants
             contestants = data["betting"].get("contestants", {})
             if contestants:
-                contestants_list = "\n".join([f"• **{name}**" for name in contestants.values()])
+                contestants_list = "\n".join(
+                    [f"• **{name}**" for name in contestants.values()]
+                )
                 example_contestant = list(contestants.values())[0]
                 error_msg = MSG_UNKNOWN_CONTESTANT.format(
                     contestant_name=choice,
                     contestants_list=contestants_list,
-                    example_contestant=example_contestant
+                    example_contestant=example_contestant,
                 )
             else:
                 error_msg = "No betting round is currently active."
-            
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, error_msg, COLOR_ERROR
-            )
+
+            await self._send_embed(ctx, TITLE_BETTING_ERROR, error_msg, COLOR_ERROR)
             return
 
         contestant_id, contestant_name = contestant_info
@@ -1246,13 +1667,18 @@ class Betting(commands.Cog):
         old_contestant = existing_bet.get("choice") if existing_bet else None
         old_amount = existing_bet.get("amount", 0) if existing_bet else 0
 
-        # Use BetState for proper balance validation (accounts for existing bet refunds)
+        # Use BetState for proper balance validation (accounts for existing bet
+        # refunds)
         bet_state = BetState(data)
         user_balance = bet_state.economy.get_balance(user_id_str)
         required_additional = amount - old_amount
 
         if required_additional > user_balance:
-            current_bet_info = f"\n🎯 **Current bet:** `{old_amount}` coins on **{old_contestant}**" if existing_bet else ""
+            current_bet_info = (
+                f"\n🎯 **Current bet:** `{old_amount}` coins on **{old_contestant}**"
+                if existing_bet
+                else ""
+            )
             await self._send_embed(
                 ctx,
                 "❌ Insufficient Funds",
@@ -1263,19 +1689,28 @@ class Betting(commands.Cog):
 
         # Place the bet using centralized logic
         channel = ctx.channel if isinstance(ctx.channel, discord.TextChannel) else None
-        
+
         # Determine if this is a bet change for messaging
-        is_bet_change = existing_bet and old_contestant and old_contestant.lower() != contestant_name.lower()
-        
+        is_bet_change = (
+            existing_bet
+            and old_contestant
+            and old_contestant.lower() != contestant_name.lower()
+        )
+
         success = await self._process_bet(
             channel, data, user_id_str, amount, contestant_name, notify_user=False
         )
-        
+
         if success:
             # Send appropriate success message
             if is_bet_change:
                 amount_change = amount - old_amount
-                change_indicator = f" (net change: {'+'if amount_change > 0 else ''}{amount_change} coins)" if amount_change != 0 else ""
+                change_indicator = (
+                    f" (net change: {
+                    '+'if amount_change > 0 else ''}{amount_change} coins)"
+                    if amount_change != 0
+                    else ""
+                )
                 await self._send_embed(
                     ctx,
                     "🔄 Bet Changed",
@@ -1336,24 +1771,31 @@ class Betting(commands.Cog):
             )
 
     @commands.command(name="betall", aliases=["allin"])
-    async def bet_all(self, ctx: commands.Context, *, contestant: Optional[str] = None) -> None:
+    async def bet_all(
+        self, ctx: commands.Context, *, contestant: Optional[str] = None
+    ) -> None:
         """Bet all coins on a contestant."""
         data = load_data()
-        
+
         # Check if betting is open
         if not data["betting"]["open"]:
             if data["betting"]["locked"]:
                 live_message_link = get_live_message_link(self.bot, data, True)
                 if live_message_link:
                     await self._send_embed(
-                        ctx, 
-                        TITLE_BETTING_ERROR, 
-                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(live_link=live_message_link), 
-                        COLOR_ERROR
+                        ctx,
+                        TITLE_BETTING_ERROR,
+                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(
+                            live_link=live_message_link
+                        ),
+                        COLOR_ERROR,
                     )
                 else:
                     await self._send_embed(
-                        ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
+                        ctx,
+                        TITLE_BETTING_ERROR,
+                        MSG_BET_LOCKED_NO_NEW_BETS,
+                        COLOR_ERROR,
                     )
             else:
                 await self._send_embed(
@@ -1372,11 +1814,11 @@ class Betting(commands.Cog):
             )
             return
 
-        # Ensure user exists and get balance  
+        # Ensure user exists and get balance
         ensure_user(data, str(ctx.author.id))
         user_data = data.get("users", {}).get(str(ctx.author.id), {})
         user_balance = user_data.get("balance", 0)
-        
+
         if user_balance <= 0:
             await self._send_embed(
                 ctx,
@@ -1391,7 +1833,7 @@ class Betting(commands.Cog):
         success = await self._process_bet(
             channel, data, str(ctx.author.id), user_balance, contestant, None, True
         )
-        
+
         if success:
             save_data(data)
             schedule_live_message_update()
@@ -1411,14 +1853,19 @@ class Betting(commands.Cog):
                 live_message_link = get_live_message_link(self.bot, data, True)
                 if live_message_link:
                     await self._send_embed(
-                        ctx, 
-                        TITLE_BETTING_ERROR, 
-                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(live_link=live_message_link), 
-                        COLOR_ERROR
+                        ctx,
+                        TITLE_BETTING_ERROR,
+                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(
+                            live_link=live_message_link
+                        ),
+                        COLOR_ERROR,
                     )
                 else:
                     await self._send_embed(
-                        ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
+                        ctx,
+                        TITLE_BETTING_ERROR,
+                        MSG_BET_LOCKED_NO_NEW_BETS,
+                        COLOR_ERROR,
                     )
             else:
                 # No betting round at all
@@ -1442,20 +1889,24 @@ class Betting(commands.Cog):
 
         contestant_info = self._find_contestant_info(data, user_bet["choice"])
         contestant_name = contestant_info[1] if contestant_info else "Unknown"
-        
+
         # Get user's current balance for context
         user_balance = data.get("balances", {}).get(str(ctx.author.id), 0)
-        
+
         # Calculate betting percentage
-        bet_percentage = (user_bet['amount'] / (user_balance + user_bet['amount'])) * 100 if (user_balance + user_bet['amount']) > 0 else 0
-        
+        bet_percentage = (
+            (user_bet["amount"] / (user_balance + user_bet["amount"])) * 100
+            if (user_balance + user_bet["amount"]) > 0
+            else 0
+        )
+
         # Enhanced mybet display
         bet_info = [
             f"🎯 **Current Bet:** `{user_bet['amount']}` coins on **{contestant_name}**",
             f"💰 **Remaining Balance:** `{user_balance}` coins",
             f"📊 **Bet Size:** {bet_percentage:.0f}% of your total funds",
         ]
-        
+
         # Add betting status context
         if data["betting"]["locked"]:
             bet_info.append("⏳ **Status:** Betting locked - awaiting results")
@@ -1464,9 +1915,11 @@ class Betting(commands.Cog):
             timer_end = data.get("timer_end_time")
             if timer_end:
                 remaining_time = max(0, int(timer_end - time.time()))
-            
+
             if remaining_time and remaining_time > 0:
-                bet_info.append(f"⏱️ **Time Remaining:** {remaining_time}s to modify bet")
+                bet_info.append(
+                    f"⏱️ **Time Remaining:** {remaining_time}s to modify bet"
+                )
             else:
                 bet_info.append("✅ **Status:** You can still modify your bet")
 
@@ -1482,7 +1935,8 @@ class Betting(commands.Cog):
         data = load_data()
         if not data["betting"]["open"]:
             if data["betting"]["locked"]:
-                # Betting round exists but is locked - show current betting info
+                # Betting round exists but is locked - show current betting
+                # info
                 live_message_link = get_live_message_link(self.bot, data, True)
                 contestants = data["betting"].get("contestants", {})
                 locked_info = [
@@ -1494,9 +1948,11 @@ class Betting(commands.Cog):
                 await self._send_embed(
                     ctx,
                     "🔒 Betting Round - Locked",
-                    "\n".join(locked_info) + (
+                    "\n".join(locked_info)
+                    + (
                         f"\n\n**Live Message:** [View Current Bets]({live_message_link})"
-                        if live_message_link else ""
+                        if live_message_link
+                        else ""
                     ),
                     COLOR_ERROR,
                 )
@@ -1554,7 +2010,8 @@ class Betting(commands.Cog):
         )
 
     @commands.command(name="manualbet")
-    @commands.has_permissions(manage_guild=True)  # Added permission check for manualbet
+    # Added permission check for manualbet
+    @commands.has_permissions(manage_guild=True)
     async def manual_bet(
         self, ctx: commands.Context, user: discord.User, amount: int, *, choice: str
     ) -> None:
@@ -1640,7 +2097,11 @@ class Betting(commands.Cog):
     @commands.command(name="debug")
     async def debug(self, ctx: commands.Context) -> None:
         data = load_data()
-        debug_info = f"Betting Open: {data['betting']['open']}\nBets Locked: {data['betting']['locked']}\nTotal Bets: {len(data['betting']['bets'])}"
+        debug_info = f"Betting Open: {
+            data['betting']['open']}\nBets Locked: {
+            data['betting']['locked']}\nTotal Bets: {
+            len(
+                data['betting']['bets'])}"
         await ctx.send(f"```\n{debug_info}\n```")
 
     @commands.command(name="forceclose", aliases=["fc"])
@@ -1648,39 +2109,59 @@ class Betting(commands.Cog):
         """Force close/reset betting state - use when betting is stuck."""
         if not await self._check_permission(ctx, "force close betting"):
             return
-            
+
         data = load_data()
-        
+
         # Reset betting state
         data["betting"] = {
             "open": False,
             "locked": False,
             "bets": {},
-            "contestants": {}
+            "contestants": {},
         }
-        
+
         # Clear live messages
         data["live_message"] = None
         data["live_channel"] = None
         data["live_secondary_message"] = None
         data["live_secondary_channel"] = None
         data["timer_end_time"] = None
-        
+
         save_data(data)
-        
+
         await self._send_embed(
-            ctx, 
-            "🔧 Force Close Complete", 
+            ctx,
+            "🔧 Force Close Complete",
             "Betting state has been forcefully reset. You can now start a new round with `!openbet`.",
-            discord.Color.green()
+            discord.Color.green(),
         )
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(
         self, payload: discord.RawReactionActionEvent
     ) -> None:
-        self._log_reaction_debug(f"🔍 REACTION ADD: user_id={payload.user_id}, emoji={payload.emoji}, msg_id={payload.message_id}")
-        
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: user_id={
+                payload.user_id}, emoji={
+                payload.emoji}, msg_id={
+                payload.message_id}"
+        )
+
+        # Debug bot user ID detection
+        bot_user_id = self.bot.user.id if self.bot.user else None
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: bot_user_id={bot_user_id}, payload_user_id={
+                payload.user_id}"
+        )
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: bot.user exists={
+                self.bot.user is not None}"
+        )
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: IDs match={
+                payload.user_id == bot_user_id}"
+        )
+
         # Ignore bot's own reactions
         if self.bot.user and payload.user_id == self.bot.user.id:
             self._log_reaction_debug(f"🔍 REACTION ADD: Ignoring bot's own reaction")
@@ -1689,9 +2170,13 @@ class Betting(commands.Cog):
         data = load_data()
         main_msg_id, main_chan_id = get_live_message_info(data)
         secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
-        
-        self._log_reaction_debug(f"🔍 REACTION ADD: main_msg={main_msg_id}, main_chan={main_chan_id}")
-        self._log_reaction_debug(f"🔍 REACTION ADD: secondary_msg={secondary_msg_id}, secondary_chan={secondary_chan_id}")
+
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: main_msg={main_msg_id}, main_chan={main_chan_id}"
+        )
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: secondary_msg={secondary_msg_id}, secondary_chan={secondary_chan_id}"
+        )
 
         # Check if the reaction is on one of the live betting messages
         is_main_message = (
@@ -1701,26 +2186,41 @@ class Betting(commands.Cog):
             payload.message_id == secondary_msg_id
             and payload.channel_id == secondary_chan_id
         )
-        
-        self._log_reaction_debug(f"🔍 REACTION ADD: is_main_message={is_main_message}, is_secondary_message={is_secondary_message}")
+
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: is_main_message={is_main_message}, is_secondary_message={is_secondary_message}"
+        )
 
         if not (is_main_message or is_secondary_message):
-            self._log_reaction_debug(f"🔍 REACTION ADD: Not a betting message reaction, ignoring")
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Not a betting message reaction, ignoring"
+            )
             return  # Not a reaction on a live betting message
 
-        self._log_reaction_debug(f"🔍 REACTION ADD: Valid betting message reaction detected")
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Valid betting message reaction detected"
+        )
 
         # Ensure betting is open
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Checking if betting is open: {
+                data['betting']['open']}"
+        )
         if not data["betting"]["open"]:
-            self._log_reaction_debug(f"🔍 REACTION ADD: Betting is closed, removing reaction")
-            # If betting is locked, remove the reaction and inform the user (optional, but good UX)
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Betting is closed, removing reaction"
+            )
+            # If betting is locked, remove the reaction and inform the user
+            # (optional, but good UX)
             channel = self.bot.get_channel(payload.channel_id)
             if isinstance(channel, discord.TextChannel):
                 try:
                     message = await channel.fetch_message(payload.message_id)
                     user = await self.bot.fetch_user(payload.user_id)
                     await message.remove_reaction(payload.emoji, user)
-                    # await self._send_embed(channel, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR) # Can't use ctx here
+                    # await self._send_embed(channel, TITLE_BETTING_ERROR,
+                    # MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR) # Can't use ctx
+                    # here
                 except discord.NotFound:
                     pass
                 except discord.HTTPException as e:
@@ -1728,55 +2228,97 @@ class Betting(commands.Cog):
             return
 
         # Get message and user objects
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Getting channel and message objects"
+        )
         channel = self.bot.get_channel(payload.channel_id)
         if not isinstance(channel, discord.TextChannel):
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Channel is not a TextChannel: {
+                    type(channel)}"
+            )
             return
 
         try:
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Fetching message and user from Discord API"
+            )
             message = await channel.fetch_message(payload.message_id)
             user = await self.bot.fetch_user(payload.user_id)
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Successfully fetched message and user"
+            )
         except discord.NotFound:
-            print(f"Message or user not found for reaction payload: {payload}")
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Message or user not found for reaction payload: {payload}"
+            )
             return
         except discord.HTTPException as e:
-            print(f"Error fetching message or user for reaction: {e}")
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: HTTPException fetching message or user: {e}"
+            )
+            return
+        except Exception as e:
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Unexpected error fetching message or user: {e}"
+            )
             return
 
         # Determine contestant from emoji
         contestant_id = _get_contestant_from_emoji(data, str(payload.emoji))
-        self._log_reaction_debug(f"🔍 REACTION ADD: emoji={payload.emoji} -> contestant_id={contestant_id}")
-        
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: emoji={
+                payload.emoji} -> contestant_id={contestant_id}"
+        )
+
         if not contestant_id:
-            self._log_reaction_debug(f"🔍 REACTION ADD: Not a betting emoji, removing reaction")
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Not a betting emoji, removing reaction"
+            )
             # Not a betting emoji, remove reaction
             await message.remove_reaction(payload.emoji, user)
             return
 
         contestant_name = data["betting"]["contestants"].get(contestant_id)
-        self._log_reaction_debug(f"🔍 REACTION ADD: contestant_id={contestant_id} -> contestant_name={contestant_name}")
-        
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: contestant_id={contestant_id} -> contestant_name={contestant_name}"
+        )
+
         if not contestant_name:
-            self._log_reaction_debug(f"🔍 REACTION ADD: Contestant name not found for ID {contestant_id}")
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Contestant name not found for ID {contestant_id}"
+            )
             await message.remove_reaction(payload.emoji, user)
             return
 
         # Get bet amount from reaction emoji
         bet_amount = data["reaction_bet_amounts"].get(str(payload.emoji))
-        self._log_reaction_debug(f"🔍 REACTION ADD: emoji={payload.emoji} -> bet_amount={bet_amount}")
-        
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: emoji={
+                payload.emoji} -> bet_amount={bet_amount}"
+        )
+
         if bet_amount is None:
-            self._log_reaction_debug(f"🔍 REACTION ADD: No bet amount configured for emoji {payload.emoji}")
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: No bet amount configured for emoji {
+                    payload.emoji}"
+            )
             await message.remove_reaction(payload.emoji, user)
             return
 
         # Ensure user has an account and sufficient balance
         ensure_user(data, str(user.id))
         user_balance = data["balances"][str(user.id)]
-        self._log_reaction_debug(f"🔍 REACTION ADD: user_balance={user_balance}, bet_amount={bet_amount}")
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: user_balance={user_balance}, bet_amount={bet_amount}"
+        )
 
         if bet_amount > user_balance:
-            self._log_reaction_debug(f"🔍 REACTION ADD: Insufficient balance, removing reaction and sending error")
-            # Insufficient balance, remove reaction and inform user in the channel
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Insufficient balance, removing reaction and sending error"
+            )
+            # Insufficient balance, remove reaction and inform user in the
+            # channel
             await message.remove_reaction(payload.emoji, user)
             shortfall = bet_amount - user_balance
             embed = discord.Embed(
@@ -1787,38 +2329,154 @@ class Betting(commands.Cog):
             await channel.send(embed=embed)
             return
 
-        self._log_reaction_debug(f"🔍 REACTION ADD: Starting batching system for user {user.id}")
-        
+        # Check if user is currently in cleanup phase - if so, defer this
+        # reaction
+        if user.id in self._users_in_cleanup:
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: User {
+                    user.id} is in cleanup phase, storing deferred reaction"
+            )
+
+            # Get sequence and timestamp for deferred reaction
+            self._reaction_sequence += 1
+            deferred_sequence = self._reaction_sequence
+            import time
+
+            deferred_timestamp = time.time()
+
+            # Store this reaction to process after cleanup completes
+            # Only keep the latest reaction per user (check sequence)
+            should_defer = True
+            if user.id in self._deferred_reactions:
+                existing_deferred_sequence = self._deferred_reactions[user.id].get(
+                    "sequence", 0
+                )
+                if deferred_sequence <= existing_deferred_sequence:
+                    should_defer = False
+                    self._log_reaction_debug(
+                        f"🔍 REACTION ADD: Ignoring out-of-order deferred reaction (sequence {deferred_sequence} <= {existing_deferred_sequence})"
+                    )
+
+            if should_defer:
+                self._deferred_reactions[user.id] = {
+                    "payload": payload,
+                    "message": message,
+                    "user": user,
+                    "contestant_name": contestant_name,
+                    "bet_amount": bet_amount,
+                    "channel": channel,
+                    "data": data,
+                    "sequence": deferred_sequence,
+                    "timestamp": deferred_timestamp,
+                }
+                self._log_reaction_debug(
+                    f"🔍 REACTION ADD: Stored deferred reaction for user {
+                        user.id}: {contestant_name} for {bet_amount} coins (sequence: {deferred_sequence})"
+                )
+
+            return
+
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Starting batching system for user {
+                user.id}"
+        )
+
+        # GLOBAL ENFORCEMENT: Remove any existing betting reactions from this user
+        # This ensures each user only has 1 active reaction at a time
+        # But skip if user is already in cleanup phase to avoid conflicts
+        # TEMPORARILY DISABLED - Rate limiting interferes with rapid testing
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Global enforcement temporarily disabled for testing"
+        )
+        # if user.id not in self._users_in_cleanup:
+        #     self._log_reaction_debug(f"🔍 REACTION ADD: Enforcing single reaction per user")
+        #     await self._enforce_single_reaction_per_user(message, user, data, str(payload.emoji))
+        # else:
+        #     self._log_reaction_debug(f"🔍 REACTION ADD: Skipping enforcement - user {user.id} already in cleanup phase")
+
         # Use batching system to handle multiple rapid reactions
         # Cancel any existing timer for this user
-        self._log_reaction_debug(f"🔍 REACTION ADD: Cancelling existing timer for user {user.id}")
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Cancelling existing timer for user {
+                user.id}"
+        )
         self._cancel_user_reaction_timer(user.id)
-        
-        # Store the pending bet information (this will overwrite any previous pending bet)
-        self._pending_reaction_bets[user.id] = {
-            "message": message,
-            "user": user,
-            "data": data,
-            "contestant_name": contestant_name,
-            "bet_amount": bet_amount,
-            "emoji": str(payload.emoji),
-            "channel": channel
-        }
-        self._log_reaction_debug(f"🔍 REACTION ADD: Stored pending bet: {contestant_name} for {bet_amount} coins, emoji {payload.emoji}")
-        
+
+        # Store the pending bet information with sequence-based ordering
+        # Only store if this reaction is newer than any existing pending bet
+        emoji_str = str(payload.emoji)
+
+        # Increment sequence counter and get timestamp
+        self._reaction_sequence += 1
+        current_sequence = self._reaction_sequence
+        import time
+
+        current_timestamp = time.time()
+
+        # Check if we should store this reaction (only if newer than existing)
+        should_store = True
+        if user.id in self._pending_reaction_bets:
+            existing_sequence = self._pending_reaction_bets[user.id].get("sequence", 0)
+            existing_timestamp = self._pending_reaction_bets[user.id].get(
+                "timestamp", 0
+            )
+
+            # Only store if this reaction has a higher sequence number (more
+            # recent)
+            if current_sequence <= existing_sequence:
+                should_store = False
+                self._log_reaction_debug(
+                    f"🔍 REACTION ADD: Ignoring out-of-order reaction: {contestant_name} for {bet_amount} coins (sequence {current_sequence} <= {existing_sequence})"
+                )
+
+        if should_store:
+            self._pending_reaction_bets[user.id] = {
+                "message": message,
+                "user": user,
+                "data": data,
+                "contestant_name": contestant_name,
+                "bet_amount": bet_amount,
+                "emoji": emoji_str,
+                "channel": channel,
+                "sequence": current_sequence,
+                "timestamp": current_timestamp,
+            }
+            self._log_reaction_debug(
+                f"🔍 REACTION ADD: Stored pending bet: {contestant_name} for {bet_amount} coins, emoji {emoji_str} (sequence: {current_sequence}, timestamp: {
+                    current_timestamp:.3f})"
+            )
+        else:
+            # Don't restart timers if we're ignoring this reaction
+            return
+
         # Start a new timer to process this bet after a short delay
         # This allows multiple rapid reactions to be batched together
         timer_task = asyncio.create_task(self._delayed_reaction_processing(user.id))
         self._reaction_timers[user.id] = timer_task
-        self._log_reaction_debug(f"🔍 REACTION ADD: Started primary timer for user {user.id}")
-        
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Started primary timer for user {
+                user.id}"
+        )
+
         # Add a safety mechanism: also schedule a backup processing in case the primary fails
-        # This is a failsafe to ensure bets get processed even if there are timer issues
+        # This is a failsafe to ensure bets get processed even if there are
+        # timer issues
         asyncio.create_task(self._backup_reaction_processing(user.id, 3.0))
-        self._log_reaction_debug(f"🔍 REACTION ADD: Started backup timer for user {user.id}")
-        
-        self._log_reaction_debug(f"🔍 REACTION ADD: Current pending bets: {list(self._pending_reaction_bets.keys())}")
-        self._log_reaction_debug(f"🔍 REACTION ADD: Current active timers: {list(self._reaction_timers.keys())}")
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Started backup timer for user {
+                user.id}"
+        )
+
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Current pending bets: {
+                list(
+                    self._pending_reaction_bets.keys())}"
+        )
+        self._log_reaction_debug(
+            f"🔍 REACTION ADD: Current active timers: {
+                list(
+                    self._reaction_timers.keys())}"
+        )
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(
@@ -1827,9 +2485,11 @@ class Betting(commands.Cog):
         # Ignore bot's own reactions
         if self.bot.user and payload.user_id == self.bot.user.id:
             return
-        
+
         # Check if this is a programmatic removal (to prevent race conditions)
-        if self._is_programmatic_removal(payload.message_id, payload.user_id, str(payload.emoji)):
+        if self._is_programmatic_removal(
+            payload.message_id, payload.user_id, str(payload.emoji)
+        ):
             return  # This was a programmatic removal, don't process it as user action
 
         data = load_data()

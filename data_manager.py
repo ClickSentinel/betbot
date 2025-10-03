@@ -131,11 +131,11 @@ def load_data() -> Data:
     if "balances" not in data:
         data["balances"] = {}
         modified = True
-    # This loop ensures existing users in data.json have a balance entry if somehow missing
+    # This loop ensures existing users in data.json have a balance entry if
+    # somehow missing
     for user_id in list(data["balances"].keys()):
-        if (
-            user_id not in data["balances"]
-        ):  # This condition is technically redundant if "balances" is initialized
+        # This condition is technically redundant if "balances" is initialized
+        if user_id not in data["balances"]:
             data["balances"][user_id] = STARTING_BALANCE
             modified = True
 

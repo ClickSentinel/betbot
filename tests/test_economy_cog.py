@@ -7,6 +7,7 @@ import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 import discord
 from cogs.economy import Economy
+
 # Import not needed for these tests
 
 
@@ -42,28 +43,19 @@ class TestEconomyCog:
     def test_data(self):
         """Test data structure."""
         return {
-            "balances": {
-                "11111": 500,
-                "22222": 750,
-                "67890": 1000
-            },
-            "betting": {
-                "bets": {},
-                "contestants": {},
-                "locked": False,
-                "open": False
-            }
+            "balances": {"11111": 500, "22222": 750, "67890": 1000},
+            "betting": {"bets": {}, "contestants": {}, "locked": False, "open": False},
         }
 
     @pytest.mark.asyncio
     async def test_balance_command_self(self, economy_cog, mock_ctx, test_data):
         """Test checking your own balance."""
-        with patch('cogs.economy.load_data', return_value=test_data):
+        with patch("cogs.economy.load_data", return_value=test_data):
             await economy_cog.balance.callback(economy_cog, mock_ctx)
-            
+
             # Should send embed with user's balance
             mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]['embed']
+            embed_call = mock_ctx.send.call_args[1]["embed"]
             assert "1000" in embed_call.description
             assert "Your Balance" in embed_call.description
 
@@ -74,12 +66,12 @@ class TestEconomyCog:
         target_user.id = 11111
         target_user.display_name = "OtherUser"
 
-        with patch('cogs.economy.load_data', return_value=test_data):
+        with patch("cogs.economy.load_data", return_value=test_data):
             await economy_cog.balance.callback(economy_cog, mock_ctx, target_user)
 
             # Should send embed with target user's balance
             mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]['embed']
+            embed_call = mock_ctx.send.call_args[1]["embed"]
             assert "500" in embed_call.description
             assert "OtherUser" in embed_call.description
 
@@ -90,12 +82,12 @@ class TestEconomyCog:
         target_user.id = 99999
         target_user.display_name = "NewUser"
 
-        with patch('cogs.economy.load_data', return_value=test_data):
+        with patch("cogs.economy.load_data", return_value=test_data):
             await economy_cog.balance.callback(economy_cog, mock_ctx, target_user)
 
             # Should create user with default balance
             mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]['embed']
+            embed_call = mock_ctx.send.call_args[1]["embed"]
             assert "1000" in embed_call.description  # Default balance
             assert "NewUser" in embed_call.description
 
@@ -106,8 +98,9 @@ class TestEconomyCog:
         target_user.id = 11111
         target_user.display_name = "OtherUser"
 
-        with patch('cogs.economy.load_data', return_value=test_data), \
-             patch('cogs.economy.save_data') as mock_save:
+        with patch("cogs.economy.load_data", return_value=test_data), patch(
+            "cogs.economy.save_data"
+        ) as mock_save:
 
             await economy_cog.give.callback(economy_cog, mock_ctx, target_user, 200)
 
@@ -125,12 +118,12 @@ class TestEconomyCog:
         target_user = MagicMock()
         target_user.id = 11111
 
-        with patch('cogs.economy.load_data', return_value=test_data):
+        with patch("cogs.economy.load_data", return_value=test_data):
             await economy_cog.give.callback(economy_cog, mock_ctx, target_user, -100)
 
             # Should send error message
             mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]['embed']
+            embed_call = mock_ctx.send.call_args[1]["embed"]
             assert "Amount must be a positive number" in embed_call.description
 
     @pytest.mark.asyncio
@@ -140,8 +133,9 @@ class TestEconomyCog:
         target_user.id = 11111
         target_user.display_name = "OtherUser"
 
-        with patch('cogs.economy.load_data', return_value=test_data), \
-             patch('cogs.economy.save_data') as mock_save:
+        with patch("cogs.economy.load_data", return_value=test_data), patch(
+            "cogs.economy.save_data"
+        ) as mock_save:
 
             await economy_cog.take.callback(economy_cog, mock_ctx, target_user, 200)
 
@@ -154,19 +148,26 @@ class TestEconomyCog:
             mock_ctx.send.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_take_command_insufficient_funds(self, economy_cog, mock_ctx, test_data):
+    async def test_take_command_insufficient_funds(
+        self, economy_cog, mock_ctx, test_data
+    ):
         """Test taking more coins than user has."""
         target_user = MagicMock()
         target_user.id = 11111
         target_user.display_name = "OtherUser"
 
-        with patch('cogs.economy.load_data', return_value=test_data):
-            await economy_cog.take.callback(economy_cog, mock_ctx, target_user, 600)  # More than 500 balance
+        with patch("cogs.economy.load_data", return_value=test_data):
+            await economy_cog.take.callback(
+                economy_cog, mock_ctx, target_user, 600
+            )  # More than 500 balance
 
             # Should send error message
             mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]['embed']
-            assert "only has" in embed_call.description and "Cannot take" in embed_call.description
+            embed_call = mock_ctx.send.call_args[1]["embed"]
+            assert (
+                "only has" in embed_call.description
+                and "Cannot take" in embed_call.description
+            )
 
     @pytest.mark.asyncio
     async def test_set_balance_command(self, economy_cog, mock_ctx, test_data):
@@ -175,10 +176,13 @@ class TestEconomyCog:
         target_user.id = 11111
         target_user.display_name = "OtherUser"
 
-        with patch('cogs.economy.load_data', return_value=test_data), \
-             patch('cogs.economy.save_data') as mock_save:
+        with patch("cogs.economy.load_data", return_value=test_data), patch(
+            "cogs.economy.save_data"
+        ) as mock_save:
 
-            await economy_cog.set_balance.callback(economy_cog, mock_ctx, target_user, 1500)
+            await economy_cog.set_balance.callback(
+                economy_cog, mock_ctx, target_user, 1500
+            )
 
             # Should save updated data
             mock_save.assert_called_once()
@@ -194,12 +198,14 @@ class TestEconomyCog:
         target_user = MagicMock()
         target_user.id = 11111
 
-        with patch('cogs.economy.load_data', return_value=test_data):
-            await economy_cog.set_balance.callback(economy_cog, mock_ctx, target_user, -100)
+        with patch("cogs.economy.load_data", return_value=test_data):
+            await economy_cog.set_balance.callback(
+                economy_cog, mock_ctx, target_user, -100
+            )
 
             # Should send error message
             mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]['embed']
+            embed_call = mock_ctx.send.call_args[1]["embed"]
             assert "Amount must be a positive number" in embed_call.description
 
     @pytest.mark.asyncio
@@ -208,12 +214,12 @@ class TestEconomyCog:
         # Test large numbers are formatted with commas
         test_data["balances"]["67890"] = 1234567
 
-        with patch('cogs.economy.load_data', return_value=test_data):
+        with patch("cogs.economy.load_data", return_value=test_data):
             await economy_cog.balance.callback(economy_cog, mock_ctx)
 
             # Should display large numbers
             mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]['embed']
+            embed_call = mock_ctx.send.call_args[1]["embed"]
             assert "1234567" in embed_call.description
 
     @pytest.mark.asyncio
@@ -224,8 +230,8 @@ class TestEconomyCog:
 
         # The actual permission checking is done by Discord.py decorators
         # but we can test that the commands exist and can be called
-        with patch('cogs.economy.load_data', return_value=test_data):
+        with patch("cogs.economy.load_data", return_value=test_data):
             # These should not raise AttributeError
-            assert hasattr(economy_cog.give, 'callback')
-            assert hasattr(economy_cog.take, 'callback')
-            assert hasattr(economy_cog.set_balance, 'callback')
+            assert hasattr(economy_cog.give, "callback")
+            assert hasattr(economy_cog.take, "callback")
+            assert hasattr(economy_cog.set_balance, "callback")

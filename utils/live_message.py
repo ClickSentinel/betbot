@@ -1,66 +1,74 @@
+from config import (
+    LIVE_MESSAGE_KEY,
+    LIVE_CHANNEL_KEY,
+    LIVE_SECONDARY_KEY,
+    LIVE_SECONDARY_CHANNEL_KEY,
+    BET_TIMER_DURATION,
+)
 import discord
-import math
 import time
 import asyncio
 from typing import Optional, Tuple, Dict, Any, cast, List, Set
 
 from data_manager import save_data, Data
 from .message_formatter import MessageFormatter
-from .bet_state import WinnerInfo, BetInfo, BettingSession, TimerInfo, UserResult
+from .bet_state import WinnerInfo, BettingSession, TimerInfo
 
 
 class LiveMessageScheduler:
     """Batches live message updates on a 5-second schedule to reduce API calls."""
-    
+
     def __init__(self):
-        self.pending_updates: Set[str] = set()  # Set of data file paths needing updates
+        # Set of data file paths needing updates
+        self.pending_updates: Set[str] = set()
         self.update_task: Optional[asyncio.Task] = None
         self.bot: Optional[discord.Client] = None
         self.is_running = False
-    
+
     def set_bot(self, bot: discord.Client) -> None:
         """Set the bot instance for making Discord API calls."""
         self.bot = bot
-    
+
     def schedule_update(self, data_identifier: str = "default") -> None:
         """Schedule a live message update. Multiple calls within 5 seconds are batched."""
         if not self.bot:
             return
-            
+
         self.pending_updates.add(data_identifier)
-        
+
         # Start the update loop if not already running
         if not self.is_running:
             self.is_running = True
             if self.update_task:
                 self.update_task.cancel()
             self.update_task = asyncio.create_task(self._update_loop())
-    
+
     async def _update_loop(self) -> None:
         """Process batched updates every 5 seconds."""
         try:
             while self.pending_updates and self.bot:
                 await asyncio.sleep(5.0)  # 5-second batch window
-                
+
                 if self.pending_updates:
                     # Process all pending updates in one batch
                     updates_to_process = self.pending_updates.copy()
                     self.pending_updates.clear()
-                    
+
                     # Load current data and update all pending messages
                     from data_manager import load_data
+
                     data = load_data()
-                    
+
                     # Update live message with current state
                     await update_live_message(self.bot, data)
-                    
+
         except asyncio.CancelledError:
             pass
         except Exception as e:
             print(f"Error in live message update loop: {e}")
         finally:
             self.is_running = False
-    
+
     def stop(self) -> None:
         """Stop the update scheduler."""
         self.is_running = False
@@ -84,28 +92,25 @@ def convert_to_betting_session(data: Data) -> BettingSession:
         "locked": betting_data.get("locked", False),
     }
 
-def create_winner_info(winner_name: Optional[str], winnings_info: Optional[Dict[str, int]] = None) -> Optional[WinnerInfo]:
+
+def create_winner_info(
+    winner_name: Optional[str], winnings_info: Optional[Dict[str, int]] = None
+) -> Optional[WinnerInfo]:
     """Legacy function for backward compatibility. Now uses BetState."""
     if not winner_name:
         return None
-        
+
     if winnings_info is None:
         winnings_info = {}
 
     # Create a minimal bet state with just the necessary data
     from .bet_state import BetState
-    from typing import TypedDict, Dict
+    from typing import TypedDict
 
     class UserBet(TypedDict):
         amount: int
         choice: str
         emoji: Optional[str]
-
-    class BettingState(TypedDict):
-        bets: Dict[str, UserBet]
-        open: bool
-        locked: bool
-        contestants: Dict[str, str]
 
     data: Data = {
         "betting": {
@@ -113,13 +118,13 @@ def create_winner_info(winner_name: Optional[str], winnings_info: Optional[Dict[
                 user_id: {
                     "amount": abs(winnings) if winnings <= 0 else winnings // 2,
                     "choice": winner_name.lower() if winnings > 0 else "other",
-                    "emoji": None
+                    "emoji": None,
                 }
                 for user_id, winnings in winnings_info.items()
             },
             "open": False,
             "locked": True,
-            "contestants": {}
+            "contestants": {},
         },
         "balances": {},
         "settings": {},
@@ -130,51 +135,42 @@ def create_winner_info(winner_name: Optional[str], winnings_info: Optional[Dict[
         "live_channel": None,
         "live_secondary_message": None,
         "live_secondary_channel": None,
-        "timer_end_time": None
+        "timer_end_time": None,
     }
-    
+
     # Use the centralized calculation
     bet_state = BetState(data)
     results = bet_state.calculate_round_results(winner_name)
-    
+
     return {
         "name": winner_name,
         "total_pot": results["total_pot"],
         "winning_pot": results["winning_pot"],
-        "user_results": results["user_results"]
+        "user_results": results["user_results"],
     }
 
+
 def create_timer_info(
-    current_remaining_time: Optional[int],
-    current_total_duration: Optional[int]
+    current_remaining_time: Optional[int], current_total_duration: Optional[int]
 ) -> Optional[TimerInfo]:
     """Creates a TimerInfo object from timer data."""
     if current_remaining_time is None or current_total_duration is None:
         return None
-        
-    return {
-        "remaining": current_remaining_time,
-        "total": current_total_duration
-    }
+
+    return {"remaining": current_remaining_time, "total": current_total_duration}
+
 
 def get_emoji_config(data: Data) -> Dict[str, Any]:
     """Gets reaction emoji configuration from data."""
     return {
         "contestant_1_emojis": data.get("contestant_1_emojis", []),
-        "contestant_2_emojis": data.get("contestant_2_emojis", [])
+        "contestant_2_emojis": data.get("contestant_2_emojis", []),
     }
+
 
 def get_reaction_bet_amounts(data: Data) -> Dict[str, int]:
     """Gets reaction bet amounts configuration from data."""
     return data.get("reaction_bet_amounts", {})
-
-from config import (
-    LIVE_MESSAGE_KEY,
-    LIVE_CHANNEL_KEY,
-    LIVE_SECONDARY_KEY,
-    LIVE_SECONDARY_CHANNEL_KEY,
-    BET_TIMER_DURATION,
-)
 
 
 def get_live_message_info(data: Data) -> Tuple[Optional[int], Optional[int]]:
@@ -269,7 +265,10 @@ async def _remove_all_betting_reactions(
         except discord.NotFound:
             pass
         except discord.HTTPException as e:
-            print(f"Error removing reaction {emoji_str} from user {user.name}: {e}")
+            print(
+                f"Error removing reaction {emoji_str} from user {
+                    user.name}: {e}"
+            )
 
 
 async def update_live_message(

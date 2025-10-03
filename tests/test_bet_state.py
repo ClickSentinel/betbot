@@ -11,6 +11,7 @@ if project_root not in sys.path:
 from betbot.utils.bet_state import BetState, Economy
 from betbot.utils.bet_state import BetInfo, WinnerInfo
 
+
 class TestBetState:
     @pytest.fixture
     def bet_state(self, test_data):
@@ -84,7 +85,7 @@ class TestBetState:
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
         test_data["betting"]["bets"] = {
             users[0]: {"amount": 100, "choice": "alice", "emoji": None},
-            users[1]: {"amount": 100, "choice": "alice", "emoji": None}
+            users[1]: {"amount": 100, "choice": "alice", "emoji": None},
         }
         test_data["balances"].update({users[0]: 900, users[1]: 900})
 
@@ -114,6 +115,7 @@ class TestBetState:
 
         # Assert
         assert test_data["timer_end_time"] is None
+
 
 class TestEconomy:
     @pytest.fixture

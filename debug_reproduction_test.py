@@ -3,7 +3,6 @@ Test to reproduce the exact issue: rapid reactions don't process until another r
 """
 
 import asyncio
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
 import discord
 
@@ -12,14 +11,14 @@ from cogs.betting import Betting
 
 async def test_reproduction_case():
     """Reproduce the exact issue described: rapid reactions don't process until another reaction."""
-    
-    # Setup bot and cog  
+
+    # Setup bot and cog
     bot = AsyncMock()
     bot.user = Mock()
     bot.user.id = 99999  # Different from test user
-    
+
     cog = Betting(bot)
-    
+
     # Mock data
     mock_data = {
         "betting": {
@@ -35,65 +34,91 @@ async def test_reproduction_case():
         "contestant_1_emojis": ["🔥", "⚡", "💪", "🏆"],
         "contestant_2_emojis": ["🌟", "💎", "🚀", "👑"],
         "reaction_bet_amounts": {
-            "🔥": 100, "⚡": 250, "💪": 500, "🏆": 1000,
-            "🌟": 100, "💎": 250, "🚀": 500, "👑": 1000
-        }
+            "🔥": 100,
+            "⚡": 250,
+            "💪": 500,
+            "🏆": 1000,
+            "🌟": 100,
+            "💎": 250,
+            "🚀": 500,
+            "👑": 1000,
+        },
     }
-    
+
     # Mock Discord objects
     mock_user = Mock()
     mock_user.id = 123
     mock_user.name = "TestUser"
-    
+
     mock_message = Mock()
     mock_message.id = 999
     mock_message.remove_reaction = AsyncMock()
-    
+
     mock_channel = Mock(spec=discord.TextChannel)
     mock_channel.id = 888
     mock_channel.send = AsyncMock()
     mock_channel.fetch_message = AsyncMock(return_value=mock_message)
-    
+
     # Setup bot mocks
     bot.get_channel.return_value = mock_channel
     bot.fetch_user.return_value = mock_user
-    
+
     # Patch _process_bet to actually modify the data
     original_process_bet = cog._process_bet
-    
-    async def mock_process_bet(channel, data, user_id, amount, choice, emoji, notify_user=True):
+
+    async def mock_process_bet(
+        channel, data, user_id, amount, choice, emoji, notify_user=True
+    ):
         """Mock _process_bet that actually modifies the data like the real one."""
         user_id_str = str(user_id)
-        
+
         # Deduct balance
         if data["balances"][user_id_str] >= amount:
             data["balances"][user_id_str] -= amount
-            
+
             # Add bet
             data["betting"]["bets"][user_id_str] = {
                 "choice": choice.lower(),
                 "amount": amount,
-                "emoji": emoji
+                "emoji": emoji,
             }
             print(f"✅ Mock bet processed: {choice} for {amount} coins")
             return True
         else:
             print(f"❌ Mock bet failed: insufficient balance")
             return False
-    
-    with patch('cogs.betting.load_data', return_value=mock_data), \
-         patch('cogs.betting.save_data'), \
-         patch('cogs.betting.schedule_live_message_update'), \
-         patch('cogs.betting.ensure_user'), \
-         patch.object(cog, '_process_bet', side_effect=mock_process_bet):
-        
+
+    # Set up proper async mocks for Discord API calls
+    mock_channel = AsyncMock(spec=discord.TextChannel)
+    mock_channel.id = 888
+    mock_message = AsyncMock()
+    mock_message.id = 999
+    mock_message.channel = mock_channel
+    mock_message.remove_reaction = AsyncMock()
+    mock_channel.fetch_message = AsyncMock(return_value=mock_message)
+    mock_channel.send = AsyncMock()  # For error messages
+
+    mock_user = AsyncMock()
+    mock_user.id = 123
+
+    cog.bot.get_channel = Mock(return_value=mock_channel)
+    cog.bot.fetch_user = AsyncMock(return_value=mock_user)
+
+    with patch("cogs.betting.load_data", return_value=mock_data), patch(
+        "cogs.betting.save_data"
+    ), patch("cogs.betting.schedule_live_message_update"), patch(
+        "cogs.betting.ensure_user"
+    ), patch.object(
+        cog, "_process_bet", side_effect=mock_process_bet
+    ):
+
         print("=== Reproducing the Issue ===")
         print(f"Initial balance: {mock_data['balances']['123']}")
         print(f"Initial bets: {mock_data['betting']['bets']}")
-        
+
         # Simulate rapid reactions like user described
         reactions = ["🔥", "⚡", "💪", "🌟"]  # Mix of contestants
-        
+
         print(f"\\n1. Adding {len(reactions)} rapid reactions...")
         for i, emoji in enumerate(reactions):
             payload = Mock()
@@ -101,29 +126,29 @@ async def test_reproduction_case():
             payload.message_id = 999
             payload.channel_id = 888
             payload.emoji = emoji
-            
-            print(f"   → Adding reaction {i+1}: {emoji}")
+
+            print(f"   → Adding reaction {i + 1}: {emoji}")
             await cog.on_raw_reaction_add(payload)
-            
+
             # Very short delay to simulate rapid but not instant clicking
             await asyncio.sleep(0.1)
-        
+
         print(f"\\nAfter all reactions added:")
         print(f"   Pending bets: {cog._pending_reaction_bets}")
         print(f"   Active timers: {list(cog._reaction_timers.keys())}")
         print(f"   Current balance: {mock_data['balances']['123']}")
         print(f"   Current bets: {mock_data['betting']['bets']}")
-        
+
         # Now wait and see if the final bet gets processed
         print(f"\\n2. Waiting 2 seconds for batching to complete...")
         await asyncio.sleep(2.0)
-        
+
         print(f"\\nAfter waiting:")
         print(f"   Pending bets: {cog._pending_reaction_bets}")
         print(f"   Active timers: {list(cog._reaction_timers.keys())}")
         print(f"   Final balance: {mock_data['balances']['123']}")
         print(f"   Final bets: {mock_data['betting']['bets']}")
-        
+
         # Check if bet was processed
         if "123" in mock_data["betting"]["bets"]:
             bet_info = mock_data["betting"]["bets"]["123"]
@@ -132,10 +157,13 @@ async def test_reproduction_case():
             if mock_data["balances"]["123"] == expected_balance:
                 print(f"   ✅ Balance correct: {mock_data['balances']['123']}")
             else:
-                print(f"   ❌ Balance wrong: expected {expected_balance}, got {mock_data['balances']['123']}")
+                print(
+                    f"   ❌ Balance wrong: expected {expected_balance}, got {
+                        mock_data['balances']['123']}"
+                )
         else:
             print(f"   ❌ ISSUE REPRODUCED: No bet was processed!")
-            
+
         # Now test the workaround: add another reaction
         print(f"\\n3. Testing workaround: adding one more reaction...")
         payload = Mock()
@@ -143,13 +171,14 @@ async def test_reproduction_case():
         payload.message_id = 999
         payload.channel_id = 888
         payload.emoji = "👑"  # Different emoji
-        
+
         await cog.on_raw_reaction_add(payload)
         await asyncio.sleep(1.5)  # Wait for processing
-        
+
         print(f"\\nAfter workaround reaction:")
         print(f"   Final balance: {mock_data['balances']['123']}")
         print(f"   Final bets: {mock_data['betting']['bets']}")
+
 
 if __name__ == "__main__":
     asyncio.run(test_reproduction_case())

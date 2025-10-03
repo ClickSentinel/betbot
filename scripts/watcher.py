@@ -6,6 +6,9 @@ import os
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+# Configuration
+ENABLE_COMPREHENSIVE_LOGGING = True  # Set to False to disable logging to file
+
 
 class BotRestarter(FileSystemEventHandler):
     def __init__(self, bot_script_name):
@@ -40,11 +43,22 @@ class BotRestarter(FileSystemEventHandler):
         # Get the betbot directory (parent of scripts directory)
         script_dir = os.path.dirname(os.path.abspath(__file__))
         betbot_dir = os.path.dirname(script_dir)
-        bot_script_full_path = os.path.join(betbot_dir, self.bot_script_name)
-        
-        print(f"Starting bot using {self.venv_python_executable}")
+
+        if ENABLE_COMPREHENSIVE_LOGGING:
+            # Use comprehensive logging script
+            bot_script_full_path = os.path.join(betbot_dir, "start_with_logging.py")
+            print(
+                f"Starting bot with comprehensive logging using {self.venv_python_executable}"
+            )
+        else:
+            # Use standard bot script
+            bot_script_full_path = os.path.join(betbot_dir, self.bot_script_name)
+            print(
+                f"Starting bot with standard logging using {self.venv_python_executable}"
+            )
+
         print(f"Bot script path: {bot_script_full_path}")
-        
+
         # Set cwd to the betbot directory so it can find its modules
         return subprocess.Popen(
             [self.venv_python_executable, bot_script_full_path],
@@ -93,6 +107,36 @@ class BotRestarter(FileSystemEventHandler):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Bot file watcher with optional comprehensive logging"
+    )
+    parser.add_argument(
+        "--no-logging",
+        action="store_true",
+        help="Disable comprehensive logging (use standard bot output)",
+    )
+    parser.add_argument(
+        "--logging",
+        action="store_true",
+        help="Enable comprehensive logging (override config variable)",
+    )
+    args = parser.parse_args()
+
+    # Override the global config based on command line args
+    if args.no_logging:
+        ENABLE_COMPREHENSIVE_LOGGING = False
+        print("Comprehensive logging DISABLED via --no-logging")
+    elif args.logging:
+        ENABLE_COMPREHENSIVE_LOGGING = True
+        print("Comprehensive logging ENABLED via --logging")
+    else:
+        print(
+            f"Comprehensive logging {'ENABLED' if ENABLE_COMPREHENSIVE_LOGGING else 'DISABLED'} (config default)"
+        )
+
     # The watcher will monitor the 'betbot' directory (parent of scripts)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     watched_path = os.path.dirname(script_dir)  # betbot directory

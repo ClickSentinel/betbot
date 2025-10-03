@@ -17,7 +17,7 @@ class TestErrorHandling:
         """Create a logger instance for testing."""
         return setup_logger("test")
 
-    @pytest.fixture 
+    @pytest.fixture
     def performance_monitor(self):
         """Create a performance monitor instance for testing."""
         return PerformanceMonitor()
@@ -25,9 +25,9 @@ class TestErrorHandling:
     def test_logger_initialization(self, logger_instance):
         """Test that logger initializes correctly."""
         assert logger_instance is not None
-        assert hasattr(logger_instance, 'info')
-        assert hasattr(logger_instance, 'error')
-        assert hasattr(logger_instance, 'warning')
+        assert hasattr(logger_instance, "info")
+        assert hasattr(logger_instance, "error")
+        assert hasattr(logger_instance, "warning")
 
     def test_logger_info_method(self, logger_instance):
         """Test logger info method."""
@@ -66,7 +66,7 @@ class TestErrorHandling:
     def test_performance_monitor_has_required_methods(self, performance_monitor):
         """Test that performance monitor has required methods."""
         # Check for common performance monitoring methods
-        assert hasattr(performance_monitor, '__init__')
+        assert hasattr(performance_monitor, "__init__")
         # Performance monitor should be functional
         assert performance_monitor is not None
 
@@ -74,7 +74,7 @@ class TestErrorHandling:
         """Test that logger handles None messages gracefully."""
         try:
             logger_instance.info(None)
-            logger_instance.error(None) 
+            logger_instance.error(None)
             logger_instance.warning(None)
             success = True
         except Exception:

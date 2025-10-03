@@ -1,12 +1,10 @@
 from typing import List, Dict, Optional, Any, Mapping
 import discord
 import math
-import time
 from .bet_state import BetInfo, WinnerInfo, BettingSession, TimerInfo
 from config import (
     CONTESTANT_EMOJIS,
     MSG_NO_BETS_PLACED_YET,
-    MSG_PLACE_MANUAL_BET_INSTRUCTIONS,
     MSG_NO_ACTIVE_BET,
     MSG_WAIT_FOR_ADMIN_TO_START,
     MSG_BET_LOCKED_NO_NEW_BETS,
@@ -57,8 +55,10 @@ class MessageFormatter:
             time_icon = "⚠️"
         else:
             time_icon = "🚨"
-            
-        return f"{time_icon} **{minutes:02d}:{seconds:02d}** remaining  [{progress_bar}]"
+
+        return f"{time_icon} **{
+            minutes:02d}:{
+            seconds:02d}** remaining  [{progress_bar}]"
 
     @staticmethod
     def format_bet_summary(
@@ -88,20 +88,26 @@ class MessageFormatter:
             bet_bar = MessageFormatter._generate_bet_progress_bar(
                 total_for_contestant, total_pot
             )
-            
+
             # Calculate percentage and average bet
-            percentage = (total_for_contestant / total_pot * 100) if total_pot > 0 else 0
+            percentage = (
+                (total_for_contestant / total_pot * 100) if total_pot > 0 else 0
+            )
             avg_bet = (total_for_contestant // num_bettors) if num_bettors > 0 else 0
-            
+
             # Enhanced contestant display with stats
             summary.append(
-                f"{CONTESTANT_EMOJIS[int(c_id)-1]} **{c_name}** ({percentage:.0f}%) {bet_bar} `{total_for_contestant}` coins\n"
+                f"{CONTESTANT_EMOJIS[int(c_id) - 1]} **{c_name}** ({percentage:.0f}%) {bet_bar} `{total_for_contestant}` coins\n"
             )
-            
+
             if num_bettors > 0:
-                summary.append(f"   👥 {num_bettors} bet{'s' if num_bettors != 1 else ''}  •  💵 Avg: `{avg_bet}`")
-                
-                # Show individual bets in compact format (max 3, then "and X more")
+                summary.append(
+                    f"   👥 {num_bettors} bet{
+                        's' if num_bettors != 1 else ''}  •  💵 Avg: `{avg_bet}`"
+                )
+
+                # Show individual bets in compact format (max 3, then "and X
+                # more")
                 sorted_bets = sorted(
                     contestant_bets[c_id], key=lambda x: x["amount"], reverse=True
                 )
@@ -110,12 +116,12 @@ class MessageFormatter:
                     user_id = next(uid for uid, b in bets.items() if b == bet_info)
                     user_name = user_names.get(user_id, f"Unknown User ({user_id})")
                     summary.append(f"  •  **{user_name}** `{bet_info['amount']}`")
-                
+
                 if len(sorted_bets) > 3:
                     summary.append(f"  •  *and {len(sorted_bets) - 3} more...*")
-                    
+
                 summary.append("\n")
-            
+
             summary.append("\n")  # Add space between contestants
 
         if not bets:
@@ -144,18 +150,20 @@ class MessageFormatter:
         for contestant_id in ["1", "2"]:
             emojis = emoji_config.get(f"contestant_{contestant_id}_emojis", [])
             name = contestants.get(contestant_id, f"Contestant {contestant_id}")
-            
+
             if emojis:
                 contestant_options = []
                 for emoji in emojis:
                     amount = amounts.get(emoji, 0)
                     if amount > 0:
                         contestant_options.append(f"{emoji} `{amount}`")
-                
+
                 if contestant_options:
                     # Use the same emoji as shown in the betting summary
                     contestant_emoji = "🔴" if contestant_id == "1" else "🔵"
-                    options.append(f"{contestant_emoji} **{name}:** {' '.join(contestant_options)}\n")
+                    options.append(
+                        f"{contestant_emoji} **{name}:** {' '.join(contestant_options)}\n"
+                    )
 
         return options
 
@@ -176,7 +184,9 @@ class MessageFormatter:
 
         for user_id, bet_info in sorted_bets:
             user_name = user_names.get(user_id, f"Unknown User ({user_id})")
-            bet_line = f"> {user_name}: {bet_info['choice'].capitalize()} - `{bet_info['amount']}` coins"
+            bet_line = f"> {user_name}: {
+                bet_info['choice'].capitalize()} - `{
+                bet_info['amount']}` coins"
             if winnings_info and user_id in winnings_info:
                 bet_line += f" (Won: `{winnings_info[user_id]}` coins)"
             detailed_list.append(f"{bet_line}\n")
@@ -252,22 +262,26 @@ class MessageFormatter:
 
             # Show results for each user
             description_parts.append("### 💰 Results\n")
-            
+
             # Only count actual discord user bets
             for user_id, bet_info in betting_session["bets"].items():
                 # Skip the display name in username that's not a real bet
                 if user_id == "0":  # Used for display purposes
                     continue
-                    
+
                 user_name = user_names.get(user_id, f"Unknown User ({user_id})")
                 bet_amount = bet_info["amount"]
                 bet_choice = bet_info["choice"]
-                
+
                 if bet_choice.lower() == winner_info["name"].lower():
                     # Winner gets their winnings (total pot)
-                    description_parts.append(f"> 🏆 **{user_name}** +`{bet_amount}` coins\n")
+                    description_parts.append(
+                        f"> 🏆 **{user_name}** +`{bet_amount}` coins\n"
+                    )
                 else:
-                    description_parts.append(f"> 💸 **{user_name}** -`{bet_amount}` coins\n")
+                    description_parts.append(
+                        f"> 💸 **{user_name}** -`{bet_amount}` coins\n"
+                    )
 
         elif betting_closed and close_summary:
             embed_title = TITLE_BETS_LOCKED
@@ -359,8 +373,8 @@ class MessageFormatter:
     @staticmethod
     def _format_contestants_header(contestants: Dict[str, str]) -> str:
         """Formats the contestants header section with improved visual design."""
-        contestant1 = contestants.get('1', 'Contestant 1')
-        contestant2 = contestants.get('2', 'Contestant 2')
+        contestant1 = contestants.get("1", "Contestant 1")
+        contestant2 = contestants.get("2", "Contestant 2")
         return (
             f"# 🏆 **{contestant1.upper()} vs {contestant2.upper()}**\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"

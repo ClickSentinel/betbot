@@ -1,3 +1,15 @@
+from utils.performance_monitor import performance_monitor
+from utils.error_handler import error_handler
+from utils.logger import logger
+from betbot.config import (
+    TOKEN,
+    COLOR_ERROR,
+    COLOR_WARNING,
+)
+import traceback
+from dotenv import load_dotenv
+from discord.ext import commands
+import discord
 import os
 import sys
 
@@ -7,21 +19,8 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import discord
-from discord.ext import commands
-from dotenv import load_dotenv
-import traceback
-
-from betbot.config import (
-    TOKEN,
-    COLOR_ERROR,
-    COLOR_WARNING,
-)
 
 # Add enhanced logging
-from utils.logger import logger
-from utils.error_handler import error_handler
-from utils.performance_monitor import performance_monitor
 
 load_dotenv()
 
@@ -43,18 +42,19 @@ class MyBot(commands.Bot):
     async def setup_hook(self) -> None:
         # Clear any stale timer state from previous runs
         await self._cleanup_stale_timer_state()
-        
+
         # Load cogs
         logger.info("Loading cogs...")
         await self.load_extension("cogs.betting")
         await self.load_extension("cogs.economy")
         await self.load_extension("cogs.help")
         logger.info("Cogs loaded successfully.")
-    
+
     async def _cleanup_stale_timer_state(self) -> None:
         """Clean up any stale timer state from previous bot runs."""
         try:
             from data_manager import load_data, save_data
+
             data = load_data()
             if data.get("timer_end_time") is not None:
                 logger.info("Cleaning up stale timer state from previous run")
@@ -116,21 +116,27 @@ class MyBot(commands.Bot):
             else:
                 embed = discord.Embed(
                     title="❌ Command Not Found",
-                    description=f"The command `!{ctx.invoked_with}` does not exist. Use `!help` for a list of commands.",
+                    description=f"The command `!{
+                        ctx.invoked_with}` does not exist. Use `!help` for a list of commands.",
                     color=COLOR_ERROR,
                 )
                 await ctx.send(embed=embed)
         elif isinstance(error, commands.MissingRequiredArgument):
             embed = discord.Embed(
                 title="⚠️ Missing Argument",
-                description=f"You are missing a required argument: `{error.param.name}`.\nUsage: `!{ctx.command.name} {ctx.command.signature}`",
+                description=f"You are missing a required argument: `{
+                    error.param.name}`.\nUsage: `!{
+                    ctx.command.name} {
+                    ctx.command.signature}`",
                 color=COLOR_ERROR,
             )
             await ctx.send(embed=embed)
         elif isinstance(error, commands.BadArgument):
             embed = discord.Embed(
                 title="⚠️ Bad Argument",
-                description=f"Invalid argument provided: {error}\nUsage: `!{ctx.command.name} {ctx.command.signature}`",
+                description=f"Invalid argument provided: {error}\nUsage: `!{
+                    ctx.command.name} {
+                    ctx.command.signature}`",
                 color=COLOR_ERROR,
             )
             await ctx.send(embed=embed)
@@ -144,32 +150,42 @@ class MyBot(commands.Bot):
         elif isinstance(error, commands.MissingPermissions):
             embed = discord.Embed(
                 title="🚫 Missing Permissions",
-                description=f"You do not have the required permissions to run this command: `{', '.join(error.missing_permissions)}`.",
+                description=f"You do not have the required permissions to run this command: `{
+                    ', '.join(
+                        error.missing_permissions)}`.",
                 color=COLOR_ERROR,
             )
             await ctx.send(embed=embed)
         elif isinstance(error, commands.BotMissingPermissions):
             embed = discord.Embed(
                 title="🚫 Bot Missing Permissions",
-                description=f"I do not have the required permissions to run this command: `{', '.join(error.missing_permissions)}`.",
+                description=f"I do not have the required permissions to run this command: `{
+                    ', '.join(
+                        error.missing_permissions)}`.",
                 color=COLOR_ERROR,
             )
             await ctx.send(embed=embed)
         elif isinstance(error, commands.CommandOnCooldown):
             embed = discord.Embed(
                 title="⏳ Command on Cooldown",
-                description=f"This command is on cooldown. Try again in `{error.retry_after:.2f}` seconds.",
+                description=f"This command is on cooldown. Try again in `{
+                    error.retry_after:.2f}` seconds.",
                 color=COLOR_WARNING,
             )
             await ctx.send(embed=embed)
         else:
-            print(f"Ignoring exception in command {ctx.command}:", file=sys.stderr)
+            print(
+                f"Ignoring exception in command {
+                    ctx.command}:",
+                file=sys.stderr,
+            )
             traceback.print_exception(
                 type(error), error, error.__traceback__, file=sys.stderr
             )
             embed = discord.Embed(
                 title="🚫 An Unexpected Error Occurred",
-                description=f"An unexpected error occurred while running `!{ctx.command}`. Please try again later.",
+                description=f"An unexpected error occurred while running `!{
+                    ctx.command}`. Please try again later.",
                 color=COLOR_ERROR,
             )
             await ctx.send(embed=embed)
@@ -185,21 +201,27 @@ async def on_ready():
     logger.info(f"Bot is ready! Logged in as {bot.user}")
     logger.info(f"Connected to {len(bot.guilds)} guilds")
     logger.info(f"Latency: {bot.latency * 1000:.2f}ms")
-    
+
     # Initialize live message scheduler for batched updates
     from utils.live_message import initialize_live_message_scheduler
+
     initialize_live_message_scheduler(bot)
     logger.info("Live message scheduler initialized for batched updates")
-    
+
     # Record startup metric
-    performance_monitor.record_metric('bot.startup', 1)
+    performance_monitor.record_metric("bot.startup", 1)
 
 
 @bot.event
 async def on_command(ctx):
     """Called before every command."""
-    logger.debug(f"Command '{ctx.command}' invoked by {ctx.author} in {ctx.guild}")
-    performance_monitor.record_metric('command.invoked', 1)
+    logger.debug(
+        f"Command '{
+            ctx.command}' invoked by {
+            ctx.author} in {
+                ctx.guild}"
+    )
+    performance_monitor.record_metric("command.invoked", 1)
 
 
 @bot.event
@@ -214,4 +236,10 @@ async def on_command_error(ctx, error):
     await error_handler.handle_command_error(ctx, error)
 
 
-bot.run(TOKEN)
+def main():
+    """Main function to start the bot."""
+    bot.run(TOKEN)
+
+
+if __name__ == "__main__":
+    main()

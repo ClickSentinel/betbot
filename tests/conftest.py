@@ -11,30 +11,22 @@ TEST_DATA_FILE = "test_data.json"
 # Mock initial data
 INITIAL_TEST_DATA = {
     "balances": {},
-    "betting": {
-        "open": False,
-        "locked": False,
-        "bets": {},
-        "contestants": {}
-    },
-    "settings": {
-        "enable_bet_timer": True,
-        "bet_channel_id": None
-    },
-    "reaction_bet_amounts": {
-        "🔴": 100,
-        "🔵": 500
-    },
+    "betting": {"open": False, "locked": False, "bets": {}, "contestants": {}},
+    "settings": {"enable_bet_timer": True, "bet_channel_id": None},
+    "reaction_bet_amounts": {"🔴": 100, "🔵": 500},
     "contestant_1_emojis": ["🔴"],
-    "contestant_2_emojis": ["🔵"]
+    "contestant_2_emojis": ["🔵"],
 }
+
 
 # Fixtures
 @pytest.fixture
 def test_data():
     """Provides clean test data for each test."""
     import copy
+
     return copy.deepcopy(INITIAL_TEST_DATA)
+
 
 @pytest.fixture
 def mock_ctx():
@@ -48,6 +40,7 @@ def mock_ctx():
     ctx.guild = MagicMock(spec=discord.Guild)
     return ctx
 
+
 @pytest.fixture
 def mock_bot():
     """Creates a mock Discord bot."""
@@ -57,6 +50,7 @@ def mock_bot():
     bot.loop = MagicMock()
     bot.loop.create_task = MagicMock()
     return bot
+
 
 @pytest.fixture
 def mock_message():
@@ -71,10 +65,12 @@ def mock_message():
     message.clear_reactions = AsyncMock()
     return message
 
+
 # Mock classes to simulate permissions and roles
 class MockRole:
     def __init__(self, name):
         self.name = name
+
 
 class MockMember:
     def __init__(self, roles=None):
@@ -82,10 +78,12 @@ class MockMember:
         self.guild_permissions = MagicMock()
         self.guild_permissions.manage_guild = False
 
+
 # Test utilities
 def setup_member_with_role(role_name):
     """Creates a mock member with a specific role."""
     return MockMember(roles=[MockRole(role_name)])
+
 
 def setup_member_with_permission():
     """Creates a mock member with manage_guild permission."""
@@ -93,12 +91,13 @@ def setup_member_with_permission():
     member.guild_permissions.manage_guild = True
     return member
 
+
 def assert_embed_contains(mock_send, title=None, description=None, color=None):
     """Asserts that a discord.Embed was sent with specific contents."""
     mock_send.assert_called_once()
     call_args = mock_send.call_args[1]
     embed = call_args["embed"]
-    
+
     if title is not None:
         assert embed.title == title
     if description is not None:
