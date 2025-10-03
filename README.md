@@ -136,7 +136,7 @@ python -m pytest tests/test_help_cog.py -v               # Help system tests
 python -m pytest tests/test_live_message.py -v           # Live message tests
 
 # Development mode with auto-restart
-python watcher.py
+python scripts/watcher.py
 ```
 
 ### Project Structure
@@ -158,14 +158,22 @@ betbot/
 │   ├── logger.py           # Logging system
 │   ├── error_handler.py    # Error management
 │   └── performance_monitor.py # System monitoring
-└── tests/                   # Test suite (127 tests)
-    ├── test_betting.py         # Core betting logic
-    ├── test_multiple_reactions.py # Reaction batching system
-    ├── test_economy_cog.py     # Economy management
-    ├── test_help_cog.py        # Help system
-    ├── test_live_message.py    # Live message updates
-    ├── test_error_handling.py  # Error handling
-    └── [13 more test modules]  # Comprehensive coverage
+├── tests/                   # Test suite (127 tests)
+│   ├── test_betting.py         # Core betting logic
+│   ├── test_multiple_reactions.py # Reaction batching system
+│   ├── test_economy_cog.py     # Economy management
+│   ├── test_help_cog.py        # Help system
+│   ├── test_live_message.py    # Live message updates
+│   ├── test_error_handling.py  # Error handling
+│   └── [13 more test modules]  # Comprehensive coverage
+├── docs/                    # Documentation
+│   ├── DEPLOYMENT.md       # Production deployment guide
+│   ├── CHANGELOG_v2.1.md   # Version 2.1 improvements
+│   ├── QUICK_REFERENCE.md  # Quick feature reference
+│   └── [other docs]        # Additional documentation
+└── scripts/                 # Utility scripts
+    ├── watcher.py          # Development auto-restart
+    └── fix_bot_issues.py   # Issue resolution utility
 ```
 
 ## 🔒 Permission System

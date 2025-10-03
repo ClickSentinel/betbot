@@ -62,7 +62,7 @@ chmod 700 data/
 
 **Development (with auto-restart):**
 ```bash
-python watcher.py
+python scripts/watcher.py
 ```
 
 **Standard Development:**
