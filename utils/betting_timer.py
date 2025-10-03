@@ -42,17 +42,19 @@ class BettingTimer:
     
     async def _run_timer(self, ctx: commands.Context, total_duration: int):
         """Internal timer implementation."""
+        import time as time_module  # Import directly to avoid mock interference
+        
         try:
             # Set end time
-            end_time = time.time() + total_duration
+            end_time = time_module.time() + total_duration
             data = load_data()
             data["timer_end_time"] = end_time
             save_data(data)
             
             # Update live message periodically (only on 5s/0s intervals)
             last_update_time = None
-            while time.time() < end_time:
-                current_time = time.time()
+            while time_module.time() < end_time:
+                current_time = time_module.time()
                 remaining_time = int(end_time - current_time)
                 
                 data = load_data()
@@ -90,6 +92,12 @@ class BettingTimer:
             self.clear_timer_state_in_data(data)
         except Exception as e:
             logger.error(f"Error in betting timer: {e}", exc_info=True)
+            # Clear timer state on error to prevent future issues
+            try:
+                data = load_data()
+                self.clear_timer_state_in_data(data)
+            except Exception:
+                pass  # Don't let cleanup errors break the error handler
     
     async def _auto_lock_bets(self, ctx: commands.Context, data: Data):
         """Automatically lock bets when timer expires."""

@@ -41,12 +41,27 @@ class MyBot(commands.Bot):
         self._ambiguous_matches: dict[int, list[str]] = {}
 
     async def setup_hook(self) -> None:
+        # Clear any stale timer state from previous runs
+        await self._cleanup_stale_timer_state()
+        
         # Load cogs
         logger.info("Loading cogs...")
         await self.load_extension("cogs.betting")
         await self.load_extension("cogs.economy")
         await self.load_extension("cogs.help")
         logger.info("Cogs loaded successfully.")
+    
+    async def _cleanup_stale_timer_state(self) -> None:
+        """Clean up any stale timer state from previous bot runs."""
+        try:
+            from data_manager import load_data, save_data
+            data = load_data()
+            if data.get("timer_end_time") is not None:
+                logger.info("Cleaning up stale timer state from previous run")
+                data["timer_end_time"] = None
+                save_data(data)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup stale timer state: {e}")
 
     async def get_context(self, message, *, cls=commands.Context):
         ctx = await super().get_context(message, cls=cls)
