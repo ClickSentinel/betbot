@@ -227,9 +227,9 @@ class TestAutomaticBetLocking:
         def track_save_data(data):
             operation_order.append("save_data")
             
-        def track_update_message(*args, **kwargs):
+        async def track_update_message(*args, **kwargs):
             operation_order.append("update_live_message")
-            return AsyncMock()()
+            return None
             
         def track_schedule_update():
             operation_order.append("schedule_live_message_update")

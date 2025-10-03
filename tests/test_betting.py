@@ -154,7 +154,8 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Call the underlying method directly
-        with patch("betbot.cogs.betting.load_data", return_value=test_data):
+        with patch("betbot.cogs.betting.load_data", return_value=test_data), \
+             patch("betbot.cogs.betting.BettingPermissions.check_permission", new_callable=AsyncMock, return_value=True):
             await betting_cog.declare_winner.callback(betting_cog, mock_ctx, "Alice")
 
         # Assert
@@ -699,3 +700,37 @@ class TestBetting:
         # Should indicate timer expired
         message = call_args[0][2] if len(call_args[0]) > 2 else call_args[0][1]
         assert "Timer expired" in message or "Time's up" in message or "locked" in message.lower()
+
+    async def test_declare_winner_no_bets(self, betting_cog, mock_ctx, test_data):
+        """Test declaring a winner when no bets were placed."""
+        # Setup
+        mock_ctx.author = setup_member_with_role("betboy")
+        betting_cog._send_embed = AsyncMock()
+        
+        # Set up test data with contestants but no bets  
+        test_data["betting"]["contestants"] = {"1": "alice", "2": "bob"}
+        test_data["betting"]["bets"] = {}  # No bets placed
+        test_data["betting"]["locked"] = True  # Must be locked to declare winner
+        
+        # Execute
+        with patch("betbot.cogs.betting.load_data", return_value=test_data), \
+             patch("betbot.cogs.betting.save_data"), \
+             patch("betbot.cogs.betting.update_live_message"), \
+             patch("betbot.cogs.betting.BettingPermissions.check_permission", new=AsyncMock(return_value=True)), \
+             patch.object(betting_cog.bet_state, 'declare_winner') as mock_declare_winner, \
+             patch.object(betting_cog, '_cancel_bet_timer'):
+            
+            await betting_cog.declare_winner.callback(betting_cog, mock_ctx, winner="alice")
+        
+        # Assert - Should send special no-bets message
+        betting_cog._send_embed.assert_called_once()
+        call_args = betting_cog._send_embed.call_args[0]
+        
+        # Should show "Round Complete" title and mention no bets were placed
+        assert call_args[1] == "Round Complete"  # title
+        assert "No bets were placed" in call_args[2]  # description
+        assert "alice wins by default" in call_args[2]  # winner mentioned
+        assert call_args[3] == COLOR_SUCCESS  # success color
+        
+        # Should still call bet_state.declare_winner to reset state
+        mock_declare_winner.assert_called_once_with("alice")
