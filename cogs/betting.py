@@ -130,7 +130,11 @@ class Betting(commands.Cog):
         if user_id in self._reaction_timers:
             task = self._reaction_timers[user_id]
             if not task.done():
-                task.cancel()
+                try:
+                    task.cancel()
+                except Exception as e:
+                    print(f"Warning: Error cancelling timer for user {user_id}: {e}")
+            # Always remove from tracking dict, even if cancel failed
             del self._reaction_timers[user_id]
     
     async def _process_batched_reaction(self, user_id: int) -> None:
@@ -201,6 +205,18 @@ class Betting(commands.Cog):
             # Clean up on error
             self._pending_reaction_bets.pop(user_id, None)
             self._reaction_timers.pop(user_id, None)
+
+    async def _backup_reaction_processing(self, user_id: int, delay: float) -> None:
+        """Backup processing to ensure bets don't get lost due to timer issues."""
+        try:
+            await asyncio.sleep(delay)
+            # Check if the user still has a pending bet that wasn't processed
+            if user_id in self._pending_reaction_bets and user_id not in self._reaction_timers:
+                print(f"⚠️ BACKUP: Primary timer failed for user {user_id}, processing backup bet")
+                await self._process_batched_reaction(user_id)
+            # If primary timer is still running, let it handle the processing
+        except Exception as e:
+            print(f"Warning: Error in backup reaction processing for user {user_id}: {e}")
 
     async def _check_permission(self, ctx: commands.Context, action: str) -> bool:
         """Centralized permission check for betting actions."""
@@ -1711,9 +1727,12 @@ class Betting(commands.Cog):
         
         # Start a new timer to process this bet after a short delay
         # This allows multiple rapid reactions to be batched together
-        self._reaction_timers[user.id] = asyncio.create_task(
-            self._delayed_reaction_processing(user.id)
-        )
+        timer_task = asyncio.create_task(self._delayed_reaction_processing(user.id))
+        self._reaction_timers[user.id] = timer_task
+        
+        # Add a safety mechanism: also schedule a backup processing in case the primary fails
+        # This is a failsafe to ensure bets get processed even if there are timer issues
+        asyncio.create_task(self._backup_reaction_processing(user.id, 3.0))
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(
