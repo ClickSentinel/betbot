@@ -12,12 +12,6 @@ This document provides detailed technical specifications for implementing multip
 from typing import TypedDict, Dict, List, Optional
 from enum import Enum
 
-class SessionCategory(Enum):
-    SPORTS = "sports"
-    ESPORTS = "esports" 
-    CUSTOM = "custom"
-    TOURNAMENT = "tournament"
-
 class SessionStatus(Enum):
     OPEN = "open"
     LOCKED = "locked"
@@ -33,9 +27,8 @@ class TimerConfig(TypedDict):
 
 class MultiBettingSession(TypedDict):
     # Identity
-    id: str                          # Format: "{category}_{timestamp}_{random}"
+    id: str                          # Format: "{timestamp}_{random}"
     title: str                       # User-friendly display name
-    category: SessionCategory        # Session type
     
     # Metadata
     created_at: float               # Unix timestamp
@@ -69,8 +62,8 @@ class MultiSessionData(TypedDict):
     betting_sessions: Dict[str, MultiBettingSession]
     active_sessions: List[str]      # IDs of non-completed sessions
     
-    # User context
-    user_contexts: Dict[str, str]   # user_id -> default_session_id
+    # Contestant mapping for auto-detection
+    contestant_to_session: Dict[str, str]  # contestant_name -> session_id
     
     # Legacy compatibility  
     legacy_mode: bool              # If true, behave like single-session
@@ -113,7 +106,6 @@ def create_legacy_session(betting_data: BettingSession) -> MultiBettingSession:
     return {
         "id": session_id,
         "title": f"{contestants.get('1', 'A')} vs {contestants.get('2', 'B')}",
-        "category": SessionCategory.CUSTOM,
         "created_at": time.time(),
         "creator_id": 0,  # Unknown for legacy
         "channel_id": 0,  # Unknown for legacy
@@ -157,59 +149,46 @@ class MultiSessionCommands:
             # Traditional: !openbet Alice Bob
             session_id = await self.create_quick_session(ctx, config.contestants)
         else:
-            # Advanced: !openbet "Title" --lock-in 7d --category sports
+            # Advanced: !openbet "Yankees vs Red Sox" --lock-in 7d
             session_id = await self.create_configured_session(ctx, config)
         
+        # Update contestant mapping for auto-detection
+        await self.update_contestant_mapping(session_id, config.contestants)
         await self.send_session_created_message(ctx, session_id)
 
     @commands.command(name="listbets", aliases=["list", "sessions"])
-    async def list_sessions(self, ctx, category: Optional[str] = None):
-        """List active betting sessions with filtering."""
+    async def list_sessions(self, ctx):
+        """List all active betting sessions."""
         
         data = load_data()
-        sessions = self.get_active_sessions(data, category)
+        sessions = self.get_active_sessions(data)
         
         if not sessions:
-            await self.send_no_sessions_message(ctx, category)
+            await self.send_no_sessions_message(ctx)
             return
             
         embed = self.format_sessions_list(sessions)
         await ctx.send(embed=embed)
 
-    @commands.command(name="switchbet", aliases=["switch", "context"])
-    async def switch_session(self, ctx, session_id: str):
-        """Switch user's default session context."""
-        
-        data = load_data()
-        if session_id not in data["betting_sessions"]:
-            await self.send_invalid_session_error(ctx, session_id)
-            return
-            
-        # Update user's default context
-        data["user_contexts"][str(ctx.author.id)] = session_id
-        save_data(data)
-        
-        session = data["betting_sessions"][session_id]
-        await self.send_context_switched_message(ctx, session)
-
     @commands.command(name="bet", aliases=["b"])
-    async def bet_multi(self, ctx, contestant: str, amount: int, *, session: Optional[str] = None):
-        """Enhanced bet command with session targeting."""
+    async def bet_multi(self, ctx, contestant: str, amount: int):
+        """Enhanced bet command with automatic session detection."""
         
         data = load_data()
         
-        # Determine target session
-        session_id = session or self.get_user_context(ctx.author.id, data)
+        # Auto-detect session by contestant name
+        session_id = self.find_session_by_contestant(contestant, data)
         
         if not session_id:
-            await self.send_no_context_error(ctx)
+            # Check if contestant name is ambiguous across sessions
+            possible_sessions = self.find_similar_contestants(contestant, data)
+            if possible_sessions:
+                await self.send_ambiguous_contestant_error(ctx, contestant, possible_sessions)
+            else:
+                await self.send_contestant_not_found_error(ctx, contestant)
             return
             
-        if session_id not in data["betting_sessions"]:
-            await self.send_invalid_session_error(ctx, session_id)
-            return
-            
-        # Process bet for specific session
+        # Process bet for auto-detected session
         await self.process_session_bet(ctx, session_id, contestant, amount)
 ```
 
@@ -245,7 +224,6 @@ class SessionCommandParser:
         return SessionConfig(
             is_simple=False,
             title=title,
-            category=SessionCategory(flags.get('category', 'custom')),
             contestants=self.extract_contestants(title, flags),
             timer_config=self.build_timer_config(flags),
         )
@@ -276,6 +254,100 @@ class SessionCommandParser:
             auto_lock_at=self.parse_timestamp(flags.get('lock-at')),
             auto_close_at=self.parse_timestamp(flags.get('close-at')),
         )
+
+class ContestantMatcher:
+    """Handles automatic session detection by contestant names."""
+    
+    @staticmethod
+    def find_session_by_contestant(contestant: str, data: MultiSessionData) -> Optional[str]:
+        """Find session containing the specified contestant."""
+        
+        # Direct mapping lookup (fastest)
+        if contestant in data.get("contestant_to_session", {}):
+            return data["contestant_to_session"][contestant]
+        
+        # Fuzzy matching across all active sessions
+        for session_id in data.get("active_sessions", []):
+            session = data["betting_sessions"].get(session_id)
+            if not session:
+                continue
+                
+            # Check all contestants in session (case-insensitive, partial match)
+            for contestant_key, contestant_name in session["contestants"].items():
+                if ContestantMatcher._is_contestant_match(contestant, contestant_name):
+                    return session_id
+        
+        return None
+    
+    @staticmethod
+    def find_similar_contestants(contestant: str, data: MultiSessionData) -> List[Dict[str, str]]:
+        """Find contestants with similar names across sessions for disambiguation."""
+        similar = []
+        
+        for session_id in data.get("active_sessions", []):
+            session = data["betting_sessions"].get(session_id)
+            if not session:
+                continue
+                
+            for contestant_key, contestant_name in session["contestants"].items():
+                if ContestantMatcher._is_similar_name(contestant, contestant_name):
+                    similar.append({
+                        "session_id": session_id,
+                        "session_title": session["title"],
+                        "contestant_name": contestant_name,
+                    })
+        
+        return similar
+    
+    @staticmethod
+    def _is_contestant_match(input_name: str, contestant_name: str) -> bool:
+        """Check if input matches contestant name (case-insensitive, partial)."""
+        input_lower = input_name.lower().strip()
+        contestant_lower = contestant_name.lower().strip()
+        
+        # Exact match
+        if input_lower == contestant_lower:
+            return True
+        
+        # Partial match (input is substring of contestant name)
+        if input_lower in contestant_lower:
+            return True
+        
+        # Handle common abbreviations (first 3+ characters)
+        if len(input_lower) >= 3 and contestant_lower.startswith(input_lower):
+            return True
+        
+        return False
+    
+    @staticmethod
+    def _is_similar_name(input_name: str, contestant_name: str) -> bool:
+        """Check if names are similar enough to suggest as alternatives."""
+        input_lower = input_name.lower().strip()
+        contestant_lower = contestant_name.lower().strip()
+        
+        # Similar length and partial overlap
+        if abs(len(input_lower) - len(contestant_lower)) <= 3:
+            # Check for partial overlap
+            overlap = 0
+            min_len = min(len(input_lower), len(contestant_lower))
+            for i in range(min_len):
+                if input_lower[i] == contestant_lower[i]:
+                    overlap += 1
+            
+            # At least 60% overlap suggests similarity
+            if overlap / min_len >= 0.6:
+                return True
+        
+        return False
+
+    @staticmethod
+    def update_contestant_mapping(session_id: str, contestants: List[str], data: MultiSessionData):
+        """Update the contestant-to-session mapping."""
+        if "contestant_to_session" not in data:
+            data["contestant_to_session"] = {}
+        
+        for contestant in contestants:
+            data["contestant_to_session"][contestant] = session_id
 ```
 
 ## ⚡ Multi-Timer System
@@ -535,23 +607,38 @@ class MultiSessionTestSuite:
             # Allow 1 second tolerance
             assert abs(actual_lock_time - expected_lock_time) < 1.0
     
-    async def test_cross_session_commands(self):
-        """Test commands work correctly across multiple sessions."""
-        # Create multiple sessions
-        sports_session = await self.create_test_session("Sports")
-        esports_session = await self.create_test_session("Esports")
+    async def test_automatic_session_detection(self):
+        """Test automatic session detection by contestant names."""
+        # Create multiple sessions with unique contestants
+        session1 = await self.create_test_session("Yankees vs Red Sox", ["Yankees", "Red Sox"])
+        session2 = await self.create_test_session("Lakers vs Warriors", ["Lakers", "Warriors"])
         
-        # Test context switching
-        await self.run_command("switchbet", sports_session.id, user="user1")
-        await self.run_command("bet", "team1", 100, user="user1")
+        # Test automatic detection - no session specification needed
+        await self.run_command("bet", "Yankees", 100, user="user1")
+        await self.run_command("bet", "Lakers", 200, user="user1")
         
-        await self.run_command("switchbet", esports_session.id, user="user1") 
-        await self.run_command("bet", "teamA", 200, user="user1")
-        
-        # Verify bets were placed in correct sessions
+        # Verify bets were placed in correct sessions automatically
         data = load_data()
-        assert data["betting_sessions"][sports_session.id]["bets"]["user1"]["choice"] == "team1"
-        assert data["betting_sessions"][esports_session.id]["bets"]["user1"]["choice"] == "teamA"
+        assert data["betting_sessions"][session1.id]["bets"]["user1"]["choice"] == "Yankees"
+        assert data["betting_sessions"][session2.id]["bets"]["user1"]["choice"] == "Lakers"
+    
+    async def test_contestant_name_matching(self):
+        """Test fuzzy matching of contestant names."""
+        session = await self.create_test_session("Match", ["Manchester United", "Chelsea"])
+        
+        # Test various forms of contestant names
+        test_cases = [
+            ("Manchester United", "Manchester United"),  # Exact match
+            ("manchester united", "Manchester United"),  # Case insensitive
+            ("Manchester", "Manchester United"),         # Partial match
+            ("Man", "Manchester United"),                # Abbreviation
+            ("Chelsea", "Chelsea"),                      # Exact match
+        ]
+        
+        for input_name, expected_match in test_cases:
+            await self.run_command("bet", input_name, 100, user="user1")
+            data = load_data()
+            assert data["betting_sessions"][session.id]["bets"]["user1"]["choice"] == expected_match
     
     async def test_performance_with_many_sessions(self):
         """Test performance with maximum expected session count."""

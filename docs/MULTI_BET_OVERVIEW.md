@@ -10,14 +10,14 @@ This document provides a comprehensive analysis of implementing multiple concurr
 1. **Long-term Sports Betting**: Baseball games, weekly matches with 7-day betting windows
 2. **Short-term Event Betting**: Tournament matches, immediate events with 90-second windows  
 3. **Mixed Timing**: Multiple concurrent bets with different lock times and update frequencies
-4. **Category Management**: Sports, esports, custom events with different rules
+4. **Unique Contestants**: Each bet has unique contestant names, eliminating confusion
 
 ### Key Features Needed
 - **Multiple Active Sessions**: Support 3-10 concurrent betting rounds
 - **Flexible Timing**: Different auto-lock times (minutes to days)
 - **Dynamic Updates**: Different live message update frequencies per session
-- **Session Management**: Easy creation, switching, and management of multiple bets
-- **User Experience**: Clear context switching and bet tracking across sessions
+- **Automatic Session Detection**: Users bet by contestant name without specifying sessions
+- **Simple User Experience**: No context switching or session management required
 
 ## 🏗️ Current Architecture Analysis
 
@@ -52,8 +52,7 @@ data = {
 data = {
     "betting_sessions": Dict[str, MultiBettingSession],  # Multiple sessions
     "active_sessions": List[str],                        # Session IDs
-    "default_session": Optional[str],                    # Current context
-    "session_categories": Dict[str, List[str]],          # Category grouping
+    "contestant_to_session": Dict[str, str],             # contestant_name -> session_id mapping
     # ... existing fields
 }
 
@@ -116,12 +115,12 @@ class MultiSessionTimer:
 
 #### 3. Enhanced Commands
 ```python
-# New command patterns
-!openbet "Yankees vs Red Sox" --lock-in 7d --category sports
+# Simplified command patterns
+!openbet "Yankees vs Red Sox" --lock-in 7d
 !openbet Alice Bob --lock-in 2h --update-interval 60s  
 !listbets                          # Show all active sessions
-!switchbet sports_001              # Change default context
-!bet Alice 100 --session sports_001   # Bet on specific session
+!bet Yankees 100                   # Auto-detects correct session by contestant name
+!bet Alice 100                     # Works seamlessly across all sessions
 !mybets                            # Show bets across all sessions
 ```
 
@@ -200,12 +199,12 @@ class MultiSessionTimer:
 
 ## 🔧 Technical Challenges
 
-### 1. State Management Complexity
-**Challenge**: Preventing commands from affecting wrong sessions
+### 1. Contestant Name Conflicts
+**Challenge**: What if multiple sessions have similar contestant names
 **Solution**: 
-- Session context tracking per user
-- Explicit session targeting in commands
-- Command validation with session state checks
+- Ensure unique contestant names across all active sessions
+- Fuzzy matching with similarity suggestions for typos
+- Clear error messages with session disambiguation when needed
 
 ### 2. Timer Resource Management
 **Challenge**: Multiple timers consuming system resources
@@ -214,12 +213,12 @@ class MultiSessionTimer:
 - Timer pooling and reuse
 - Automatic cleanup of completed sessions
 
-### 3. User Experience Complexity  
-**Challenge**: Users getting confused with multiple active sessions
+### 3. User Experience Simplicity  
+**Challenge**: Keeping the interface simple despite multiple sessions
 **Solution**:
-- Clear session indicators in all responses
-- Smart context switching based on channel/user history
-- Simplified commands with intelligent defaults
+- Automatic session detection by contestant names
+- No context switching or session management required
+- Familiar betting commands work seamlessly across all sessions
 
 ### 4. Performance & Scalability
 **Challenge**: Multiple live messages and timers impacting performance
@@ -261,10 +260,10 @@ class MultiSessionTimer:
 - [ ] Memory usage growth linear with session count
 
 ### User Experience Goals
-- [ ] Intuitive session management for casual users
-- [ ] Advanced session control for power users
-- [ ] Clear visual indicators of session context
-- [ ] Backwards compatibility for existing workflows
+- [ ] Zero additional complexity for users - betting works exactly the same
+- [ ] Automatic session detection with 95%+ accuracy
+- [ ] Clear error messages for ambiguous contestant names  
+- [ ] 100% backwards compatibility for existing workflows
 
 ## 🚧 Risk Assessment
 
