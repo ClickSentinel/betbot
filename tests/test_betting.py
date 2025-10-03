@@ -28,7 +28,7 @@ class TestBetting:
     @pytest.fixture
     def betting_cog(self, mock_bot, test_data):
         """Creates a Betting cog instance with mocked dependencies."""
-        with patch("betbot.cogs.betting.load_data", return_value=test_data):
+        with patch("cogs.betting.load_data", return_value=test_data):
             cog = Betting(mock_bot)
             return cog
 
@@ -43,12 +43,12 @@ class TestBetting:
 
         # Execute - Call the underlying method directly with mocked load_data
         # and permission check
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ) as mock_save, patch("betbot.cogs.betting.clear_live_message_info"), patch(
-            "betbot.cogs.betting.set_live_message_info"
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ) as mock_save, patch("cogs.betting.clear_live_message_info"), patch(
+            "cogs.betting.set_live_message_info"
         ), patch(
-            "betbot.cogs.betting.update_live_message"
+            "cogs.betting.update_live_message"
         ), patch(
             "discord.utils.get"
         ) as mock_get:
@@ -68,7 +68,7 @@ class TestBetting:
         mock_ctx.author = setup_member_with_role("User")
 
         # Execute - Call the underlying method directly
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
             "discord.utils.get"
         ) as mock_get:
             # Mock discord.utils.get to return None (no role found)
@@ -89,8 +89,8 @@ class TestBetting:
         mock_ctx.channel.send = AsyncMock()
 
         # Execute - Call the underlying method directly
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.update_live_message"
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.update_live_message"
         ) as mock_update:
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "100", "Alice")
 
@@ -110,7 +110,7 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Call the underlying method directly
-        with patch("betbot.cogs.betting.load_data", return_value=test_data):
+        with patch("cogs.betting.load_data", return_value=test_data):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "100", "Alice")
 
         # Assert
@@ -134,17 +134,17 @@ class TestBetting:
         payload.emoji.name = "🔴"
 
         # Execute with comprehensive mocking
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.get_live_message_info",
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.get_live_message_info",
             return_value=(mock_message.id, mock_message.channel.id),
         ), patch(
-            "betbot.cogs.betting.get_secondary_live_message_info",
+            "cogs.betting.get_secondary_live_message_info",
             return_value=(None, None),
         ), patch(
-            "betbot.utils.live_message._get_message_and_user",
+            "utils.live_message._get_message_and_user",
             return_value=(mock_message, mock_ctx.author),
         ), patch(
-            "betbot.cogs.betting.update_live_message"
+            "cogs.betting.update_live_message"
         ):
             await betting_cog.on_raw_reaction_add(payload)
 
@@ -168,8 +168,8 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Call the underlying method directly
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.BettingPermissions.check_permission",
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.BettingPermissions.check_permission",
             new_callable=AsyncMock,
             return_value=True,
         ):
@@ -213,8 +213,8 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Change bet to Bob
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.update_live_message"
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.update_live_message"
         ):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "500", "Bob")
 
@@ -244,9 +244,9 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Increase bet to 700 (needs 400 more, has 500 available)
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ) as mock_save, patch("betbot.cogs.betting.update_live_message"):
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ) as mock_save, patch("cogs.betting.update_live_message"):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "700", "Alice")
 
         # Assert - Should succeed with regular bet placed message (not "changed
@@ -281,7 +281,7 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Try to increase bet to 900 (needs 600 more, only has 200)
-        with patch("betbot.cogs.betting.load_data", return_value=test_data):
+        with patch("cogs.betting.load_data", return_value=test_data):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "900", "Alice")
 
         # Assert - Should show helpful error with current bet info
@@ -301,8 +301,8 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Call !bet with no arguments
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.get_live_message_link",
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.get_live_message_link",
             return_value="https://discord.com/channels/123/456/789",
         ):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx)
@@ -322,8 +322,8 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Call !bet with no arguments
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.get_live_message_link",
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.get_live_message_link",
             return_value="https://discord.com/channels/123/456/789",
         ):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx)
@@ -358,9 +358,9 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Place a manual bet (no emoji parameter means manual bet)
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ), patch("betbot.cogs.betting.update_live_message", new_callable=AsyncMock):
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ), patch("cogs.betting.update_live_message", new_callable=AsyncMock):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "100", "Bob")
 
         # Assert - Old reaction should be removed
@@ -390,9 +390,9 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Place a manual bet with no existing bet
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ), patch("betbot.cogs.betting.update_live_message", new_callable=AsyncMock):
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ), patch("cogs.betting.update_live_message", new_callable=AsyncMock):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "100", "Alice")
 
         # Assert - Reaction removal should NOT be called
@@ -423,9 +423,9 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Place another manual bet (change from Alice to Bob)
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ), patch("betbot.cogs.betting.update_live_message", new_callable=AsyncMock):
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ), patch("cogs.betting.update_live_message", new_callable=AsyncMock):
             await betting_cog.place_bet.callback(betting_cog, mock_ctx, "100", "Bob")
 
         # Assert - Reaction removal should NOT be called (was manual -> manual)
@@ -448,7 +448,7 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Try to bet on wrong contestant name
-        with patch("betbot.cogs.betting.load_data", return_value=test_data):
+        with patch("cogs.betting.load_data", return_value=test_data):
             await betting_cog.place_bet.callback(
                 betting_cog, mock_ctx, "charlie", "100"
             )
@@ -502,9 +502,9 @@ class TestBetting:
         betting_cog.bot.fetch_user = AsyncMock(side_effect=mock_fetch_user)
 
         # Execute - Declare Alice as winner
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ), patch("betbot.cogs.betting.update_live_message"), patch.object(
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ), patch("cogs.betting.update_live_message"), patch.object(
             betting_cog, "_check_permission", return_value=True
         ):
             await betting_cog.declare_winner.callback(betting_cog, mock_ctx, "Alice")
@@ -749,9 +749,9 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Declare Alice as winner
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ), patch("betbot.cogs.betting.update_live_message"), patch.object(
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ), patch("cogs.betting.update_live_message"), patch.object(
             betting_cog, "_check_permission", return_value=True
         ):
             await betting_cog.declare_winner.callback(betting_cog, mock_ctx, "Alice")
@@ -782,7 +782,7 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Try to bet on non-existent contestant
-        with patch("betbot.cogs.betting.load_data", return_value=test_data):
+        with patch("cogs.betting.load_data", return_value=test_data):
             await betting_cog.place_bet.callback(
                 betting_cog, mock_ctx, "500", "Charlie"
             )
@@ -816,9 +816,9 @@ class TestBetting:
         betting_cog._send_embed = AsyncMock()
 
         # Mock timer expiry by calling the handler directly
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ), patch("betbot.cogs.betting.update_live_message"):
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ), patch("cogs.betting.update_live_message"):
             await betting_cog._handle_timer_expired(mock_ctx)
 
         # Assert - Should have locked the bets
@@ -849,10 +849,10 @@ class TestBetting:
         test_data["betting"]["locked"] = True
 
         # Execute
-        with patch("betbot.cogs.betting.load_data", return_value=test_data), patch(
-            "betbot.cogs.betting.save_data"
-        ), patch("betbot.cogs.betting.update_live_message"), patch(
-            "betbot.cogs.betting.BettingPermissions.check_permission",
+        with patch("cogs.betting.load_data", return_value=test_data), patch(
+            "cogs.betting.save_data"
+        ), patch("cogs.betting.update_live_message"), patch(
+            "cogs.betting.BettingPermissions.check_permission",
             new=AsyncMock(return_value=True),
         ), patch.object(
             betting_cog.bet_state, "declare_winner"

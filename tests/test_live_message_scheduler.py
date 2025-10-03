@@ -105,7 +105,7 @@ class TestLiveMessageScheduler:
     async def test_update_loop_processes_batches(self, scheduler, mock_bot):
         """Test that the update loop processes batched updates."""
         with patch(
-            "betbot.utils.live_message.update_live_message", new_callable=AsyncMock
+            "utils.live_message.update_live_message", new_callable=AsyncMock
         ) as mock_update, patch("data_manager.load_data") as mock_load_data:
 
             mock_load_data.return_value = {"test": "data"}
@@ -148,7 +148,7 @@ class TestLiveMessageScheduler:
     async def test_update_loop_error_handling(self, scheduler, mock_bot):
         """Test that update loop handles errors gracefully."""
         with patch(
-            "betbot.utils.live_message.update_live_message", new_callable=AsyncMock
+            "utils.live_message.update_live_message", new_callable=AsyncMock
         ) as mock_update, patch("data_manager.load_data") as mock_load_data, patch(
             "builtins.print"
         ) as mock_print:
@@ -236,7 +236,7 @@ class TestGlobalSchedulerFunctions:
     async def test_integration_with_betting_flow(self):
         """Test integration with typical betting workflow."""
         with patch(
-            "betbot.utils.live_message.update_live_message", new_callable=AsyncMock
+            "utils.live_message.update_live_message", new_callable=AsyncMock
         ) as mock_update, patch("data_manager.load_data") as mock_load_data:
 
             mock_bot = MagicMock(spec=discord.Client)

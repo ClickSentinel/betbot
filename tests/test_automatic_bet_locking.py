@@ -75,11 +75,11 @@ class TestAutomaticBetLocking:
         timer = BettingTimer(mock_bot)
 
         with patch(
-            "betbot.utils.betting_timer.load_data", return_value=sample_betting_data
-        ), patch("betbot.utils.betting_timer.save_data") as mock_save, patch(
-            "betbot.utils.betting_timer.update_live_message"
+            "utils.betting_timer.load_data", return_value=sample_betting_data
+        ), patch("utils.betting_timer.save_data") as mock_save, patch(
+            "utils.betting_timer.update_live_message"
         ) as mock_update, patch(
-            "betbot.utils.betting_timer.schedule_live_message_update"
+            "utils.betting_timer.schedule_live_message_update"
         ) as mock_schedule:
 
             # Simulate timer expiration
@@ -112,15 +112,15 @@ class TestAutomaticBetLocking:
         betting_cog = Betting(mock_bot)
 
         with patch(
-            "betbot.cogs.betting.load_data", return_value=sample_betting_data
-        ), patch("betbot.cogs.betting.save_data") as mock_save, patch(
-            "betbot.cogs.betting.update_live_message"
+            "cogs.betting.load_data", return_value=sample_betting_data
+        ), patch("cogs.betting.save_data") as mock_save, patch(
+            "cogs.betting.update_live_message"
         ) as mock_update, patch(
-            "betbot.cogs.betting.schedule_live_message_update"
+            "cogs.betting.schedule_live_message_update"
         ) as mock_schedule, patch(
-            "betbot.cogs.betting.get_live_message_info", return_value=(None, None)
+            "cogs.betting.get_live_message_info", return_value=(None, None)
         ), patch(
-            "betbot.cogs.betting.get_secondary_live_message_info",
+            "cogs.betting.get_secondary_live_message_info",
             return_value=(None, None),
         ):
 
@@ -152,11 +152,11 @@ class TestAutomaticBetLocking:
 
         # Simulate a scenario where bets are placed right before timer expires
         with patch(
-            "betbot.utils.betting_timer.load_data", return_value=sample_betting_data
-        ), patch("betbot.utils.betting_timer.save_data") as mock_save, patch(
-            "betbot.utils.betting_timer.update_live_message"
+            "utils.betting_timer.load_data", return_value=sample_betting_data
+        ), patch("utils.betting_timer.save_data") as mock_save, patch(
+            "utils.betting_timer.update_live_message"
         ) as mock_update, patch(
-            "betbot.utils.betting_timer.schedule_live_message_update"
+            "utils.betting_timer.schedule_live_message_update"
         ) as mock_schedule:
 
             # Add a last-moment bet to the data
@@ -186,11 +186,11 @@ class TestAutomaticBetLocking:
         timer = BettingTimer(mock_bot)
 
         with patch(
-            "betbot.utils.betting_timer.load_data", return_value=sample_betting_data
-        ), patch("betbot.utils.betting_timer.save_data") as mock_save, patch(
-            "betbot.utils.betting_timer.update_live_message"
+            "utils.betting_timer.load_data", return_value=sample_betting_data
+        ), patch("utils.betting_timer.save_data") as mock_save, patch(
+            "utils.betting_timer.update_live_message"
         ) as mock_update, patch(
-            "betbot.utils.betting_timer.schedule_live_message_update"
+            "utils.betting_timer.schedule_live_message_update"
         ) as mock_schedule, patch(
             "time.time"
         ) as mock_time:
@@ -237,9 +237,9 @@ class TestAutomaticBetLocking:
         locked_data["betting"]["open"] = False
 
         with patch(
-            "betbot.utils.betting_timer.load_data",
+            "utils.betting_timer.load_data",
             side_effect=[sample_betting_data, locked_data],
-        ), patch("betbot.utils.betting_timer.save_data") as mock_save, patch(
+        ), patch("utils.betting_timer.save_data") as mock_save, patch(
             "time.time", side_effect=[1000.0, 1005.0]
         ):  # 5 seconds into timer
 
@@ -279,16 +279,16 @@ class TestAutomaticBetLocking:
             operation_order.append("schedule_live_message_update")
 
         with patch(
-            "betbot.cogs.betting.load_data", return_value=sample_betting_data
-        ), patch("betbot.cogs.betting.save_data", side_effect=track_save_data), patch(
-            "betbot.cogs.betting.update_live_message", side_effect=track_update_message
+            "cogs.betting.load_data", return_value=sample_betting_data
+        ), patch("cogs.betting.save_data", side_effect=track_save_data), patch(
+            "cogs.betting.update_live_message", side_effect=track_update_message
         ), patch(
-            "betbot.cogs.betting.schedule_live_message_update",
+            "cogs.betting.schedule_live_message_update",
             side_effect=track_schedule_update,
         ), patch(
-            "betbot.cogs.betting.get_live_message_info", return_value=(None, None)
+            "cogs.betting.get_live_message_info", return_value=(None, None)
         ), patch(
-            "betbot.cogs.betting.get_secondary_live_message_info",
+            "cogs.betting.get_secondary_live_message_info",
             return_value=(None, None),
         ):
 
@@ -322,16 +322,16 @@ class TestAutomaticBetLocking:
         mock_channel.fetch_message.return_value = mock_message
 
         with patch(
-            "betbot.cogs.betting.load_data", return_value=sample_betting_data
-        ), patch("betbot.cogs.betting.save_data"), patch(
-            "betbot.cogs.betting.update_live_message"
+            "cogs.betting.load_data", return_value=sample_betting_data
+        ), patch("cogs.betting.save_data"), patch(
+            "cogs.betting.update_live_message"
         ) as mock_update, patch(
-            "betbot.cogs.betting.schedule_live_message_update"
+            "cogs.betting.schedule_live_message_update"
         ), patch(
-            "betbot.cogs.betting.get_live_message_info",
+            "cogs.betting.get_live_message_info",
             return_value=(987654321, 111222333),
         ), patch(
-            "betbot.cogs.betting.get_secondary_live_message_info",
+            "cogs.betting.get_secondary_live_message_info",
             return_value=(None, None),
         ):
 
