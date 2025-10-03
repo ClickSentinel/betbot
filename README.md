@@ -182,6 +182,26 @@ betbot/
 - **betboy Role**: All user commands + betting management (`!openbet`, `!lockbets`, etc.)
 - **Manage Server**: All commands including economy management (`!give`, `!take`, etc.)
 
+## 📚 Documentation
+
+### Core Documentation
+- **README.md** (this file) - Main project overview and quick start guide
+- **docs/DEPLOYMENT.md** - Production deployment guide with testing procedures
+- **docs/CHANGELOG_v2.1.md** - Comprehensive changelog for version 2.1 improvements
+
+### Reference Guides  
+- **docs/QUICK_REFERENCE.md** - Quick guide for users, developers, and admins
+- **.github/copilot-instructions.md** - Development guidelines and architecture overview
+
+### Utility Scripts
+- **scripts/watcher.py** - Development file watcher with auto-restart
+- **scripts/fix_bot_issues.py** - Issue resolution and debugging utility
+
+### 🎯 Quick Navigation
+- **For Users**: Start with this README, then docs/QUICK_REFERENCE.md
+- **For Developers**: Check .github/copilot-instructions.md and docs/CHANGELOG_v2.1.md  
+- **For Deployment**: Use docs/DEPLOYMENT.md for production setup
+
 ## 🤝 Contributing
 
 1. Fork the repository
