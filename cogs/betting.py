@@ -1,7 +1,7 @@
 import discord
 import discord.utils
 from discord.ext import commands
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, Any
 import asyncio
 import time
 
@@ -85,8 +85,126 @@ class Betting(commands.Cog):
         
         # Initialize the live message scheduler
         initialize_live_message_scheduler(bot)
+        
+        # Track programmatic reaction removals to prevent race conditions
+        self._programmatic_removals: set = set()
+        self._programmatic_removals_timestamps: dict = {}
+        
+        # Track pending reaction bets for batching multiple rapid reactions
+        self._pending_reaction_bets: Dict[int, Dict[str, Any]] = {}  # user_id -> pending bet info
+        self._reaction_timers: Dict[int, asyncio.Task] = {}  # user_id -> timer task
 
     # --- Helper Methods for Deduplication ---
+    
+    def _create_removal_key(self, message_id: int, user_id: int, emoji: str) -> str:
+        """Create a unique key for tracking programmatic reaction removals."""
+        return f"{message_id}:{user_id}:{emoji}"
+    
+    def _mark_programmatic_removal(self, message_id: int, user_id: int, emoji: str) -> None:
+        """Mark a reaction removal as programmatic to avoid processing it as user-initiated."""
+        key = self._create_removal_key(message_id, user_id, emoji)
+        current_time = time.time()
+        self._programmatic_removals.add(key)
+        self._programmatic_removals_timestamps[key] = current_time
+        
+        # Clean up old entries (older than 30 seconds)
+        cutoff_time = current_time - 30
+        old_keys = [k for k, t in self._programmatic_removals_timestamps.items() if t < cutoff_time]
+        for old_key in old_keys:
+            self._programmatic_removals.discard(old_key)
+            self._programmatic_removals_timestamps.pop(old_key, None)
+    
+    def _is_programmatic_removal(self, message_id: int, user_id: int, emoji: str) -> bool:
+        """Check if a reaction removal is programmatic and remove it from tracking."""
+        key = self._create_removal_key(message_id, user_id, emoji)
+        if key in self._programmatic_removals:
+            self._programmatic_removals.remove(key)
+            self._programmatic_removals_timestamps.pop(key, None)
+            return True
+        return False
+
+    # --- Reaction Batching Methods ---
+    
+    def _cancel_user_reaction_timer(self, user_id: int) -> None:
+        """Cancel any existing reaction timer for a user."""
+        if user_id in self._reaction_timers:
+            task = self._reaction_timers[user_id]
+            if not task.done():
+                task.cancel()
+            del self._reaction_timers[user_id]
+    
+    async def _process_batched_reaction(self, user_id: int) -> None:
+        """Process the final batched reaction after the delay period."""
+        try:
+            # Remove the timer from tracking
+            self._reaction_timers.pop(user_id, None)
+            
+            # Get the pending bet info
+            if user_id not in self._pending_reaction_bets:
+                return  # No pending bet, nothing to do
+            
+            bet_info = self._pending_reaction_bets.pop(user_id)
+            
+            # Extract the bet information
+            message = bet_info["message"]
+            user = bet_info["user"]
+            data = bet_info["data"]
+            contestant_name = bet_info["contestant_name"]
+            bet_amount = bet_info["bet_amount"]
+            final_emoji = bet_info["emoji"]
+            channel = bet_info["channel"]
+            
+            # Process the final bet
+            user_id_str = str(user.id)
+            success = await self._process_bet(
+                channel=channel if isinstance(channel, discord.TextChannel) else None,
+                data=data,
+                user_id=user_id_str,
+                amount=bet_amount,
+                choice=contestant_name,
+                emoji=final_emoji,
+                notify_user=False,  # Don't send notification messages for reaction bets
+            )
+            
+            if success:
+                # Remove ALL betting reactions from the user, then add back the final one
+                await self._remove_user_betting_reactions(
+                    message, user, data, exclude_emoji=None  # Remove ALL reactions first
+                )
+                
+                # Add back the final emoji
+                try:
+                    await message.add_reaction(final_emoji)
+                except discord.HTTPException as e:
+                    print(f"Error adding final reaction {final_emoji}: {e}")
+            else:
+                # If bet failed, remove all reactions including the final one
+                await self._remove_user_betting_reactions(
+                    message, user, data, exclude_emoji=None
+                )
+                
+        except Exception as e:
+            print(f"Error processing batched reaction for user {user_id}: {e}")
+            # Clean up on error
+            self._pending_reaction_bets.pop(user_id, None)
+            self._reaction_timers.pop(user_id, None)
+    
+    async def _delayed_reaction_processing(self, user_id: int) -> None:
+        """Wait for a short delay, then process the batched reaction."""
+        try:
+            # Wait for 1 second to allow batching of multiple rapid reactions
+            await asyncio.sleep(1.0)
+            # Process the final batched reaction
+            await self._process_batched_reaction(user_id)
+        except asyncio.CancelledError:
+            # Timer was cancelled due to a new reaction, clean up
+            self._pending_reaction_bets.pop(user_id, None)
+            raise
+        except Exception as e:
+            print(f"Error in delayed reaction processing for user {user_id}: {e}")
+            # Clean up on error
+            self._pending_reaction_bets.pop(user_id, None)
+            self._reaction_timers.pop(user_id, None)
 
     async def _check_permission(self, ctx: commands.Context, action: str) -> bool:
         """Centralized permission check for betting actions."""
@@ -340,13 +458,19 @@ class Betting(commands.Cog):
                 continue  # Skip the emoji that was just added
 
             try:
+                # Mark this removal as programmatic to prevent race condition
+                self._mark_programmatic_removal(message.id, user.id, emoji_str)
                 # print(f"DEBUG: Removing reaction: {emoji_str}")
                 await message.remove_reaction(emoji_str, user)
                 # print(f"DEBUG: Successfully removed reaction: {emoji_str}")
             except discord.NotFound:
                 # print(f"DEBUG: Reaction {emoji_str} not found for user {user.name}, skipping.")
+                # Remove the mark since the removal didn't happen
+                self._is_programmatic_removal(message.id, user.id, emoji_str)
                 pass
             except discord.HTTPException as e:
+                # Remove the mark since the removal failed
+                self._is_programmatic_removal(message.id, user.id, emoji_str)
                 print(
                     f"ERROR: Failed to remove reaction {emoji_str} from user {user.name}: {e}"
                 )
@@ -459,6 +583,18 @@ class Betting(commands.Cog):
                 f"Contestant '{winner_name}' not found.",
                 COLOR_ERROR,
             )
+            return
+
+        # Check if there are any bets before proceeding
+        if not data["betting"]["bets"]:
+            await self._send_embed(
+                ctx,
+                "Round Complete",
+                f"No bets were placed in this round. {winner_name} wins by default!",
+                COLOR_SUCCESS,
+            )
+            # Reset betting state even with no bets
+            self.bet_state.declare_winner(winner_name)
             return
 
         # Calculate statistics BEFORE processing winner (which clears bet data)
@@ -1562,31 +1698,26 @@ class Betting(commands.Cog):
             await channel.send(embed=embed)
             return
 
-        # Process the bet first (this handles bet changes atomically)
-        user_id_str = str(user.id)
-        previous_bet_info = data["betting"]["bets"].get(user_id_str)
-
-        success = await self._process_bet(
-            channel=channel if isinstance(channel, discord.TextChannel) else None,
-            data=data,
-            user_id=user_id_str,
-            amount=bet_amount,
-            choice=contestant_name,
-            emoji=str(payload.emoji),
-            notify_user=False,  # Don't send notification messages for reaction bets
+        # Use batching system to handle multiple rapid reactions
+        # Cancel any existing timer for this user
+        self._cancel_user_reaction_timer(user.id)
+        
+        # Store the pending bet information (this will overwrite any previous pending bet)
+        self._pending_reaction_bets[user.id] = {
+            "message": message,
+            "user": user,
+            "data": data,
+            "contestant_name": contestant_name,
+            "bet_amount": bet_amount,
+            "emoji": str(payload.emoji),
+            "channel": channel
+        }
+        
+        # Start a new timer to process this bet after a short delay
+        # This allows multiple rapid reactions to be batched together
+        self._reaction_timers[user.id] = asyncio.create_task(
+            self._delayed_reaction_processing(user.id)
         )
-
-        if success:
-            # Only after successful bet placement, remove old reactions
-            # This ensures the live message shows a smooth transition from old bet to new bet
-            await self._remove_user_betting_reactions(
-                message, user, data, exclude_emoji=str(payload.emoji)
-            )
-        else:
-            # If bet failed, remove the reaction
-            await message.remove_reaction(payload.emoji, user)
-            
-        # Live message update is handled by _process_bet
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(
@@ -1595,6 +1726,10 @@ class Betting(commands.Cog):
         # Ignore bot's own reactions
         if self.bot.user and payload.user_id == self.bot.user.id:
             return
+        
+        # Check if this is a programmatic removal (to prevent race conditions)
+        if self._is_programmatic_removal(payload.message_id, payload.user_id, str(payload.emoji)):
+            return  # This was a programmatic removal, don't process it as user action
 
         data = load_data()
         main_msg_id, main_chan_id = get_live_message_info(data)
