@@ -52,7 +52,7 @@ from config import (
     MSG_INVALID_OPENBET_FORMAT,
     MSG_BET_LOCKED_WITH_LIVE_LINK,
 )
-from data_manager import load_data, save_data, ensure_user, Data
+from data_manager import load_data, save_data, ensure_user, Data, MultiBettingSession, TimerConfig
 from utils.live_message import (
     get_live_message_info,
     get_saved_bet_channel_id,
@@ -699,27 +699,52 @@ class Betting(commands.Cog):
                 )
             return False
 
-        # Find and validate contestant
+        # Find and validate contestant (works for both single and multi-session)
         contestant_info = self._find_contestant_info(data, choice)
         if not contestant_info:
             self._log_reaction_debug(
                 f"🔍 PROCESS BET: Failed - contestant not found: {choice}"
             )
             if notify_user and channel:
-                # Generate helpful error message with available contestants
-                contestants = data["betting"].get("contestants", {})
-                if contestants:
-                    contestants_list = "\n".join(
-                        [f"• **{name}**" for name in contestants.values()]
-                    )
-                    example_contestant = list(contestants.values())[0]
-                    error_msg = MSG_UNKNOWN_CONTESTANT.format(
-                        contestant_name=choice,
-                        contestants_list=contestants_list,
-                        example_contestant=example_contestant,
-                    )
+                from data_manager import is_multi_session_mode
+                
+                if is_multi_session_mode(data):
+                    # Multi-session mode: show contestants from all active sessions
+                    active_sessions = data.get("active_sessions", [])
+                    all_contestants = []
+                    
+                    for session_id in active_sessions:
+                        session = data["betting_sessions"].get(session_id, {})
+                        if session.get("status") == "open":
+                            contestants = session.get("contestants", {})
+                            for name in contestants.values():
+                                all_contestants.append(f"• **{name}** (Session: {session_id})")
+                    
+                    if all_contestants:
+                        contestants_list = "\n".join(all_contestants)
+                        example_contestant = list(data["betting_sessions"][active_sessions[0]]["contestants"].values())[0] if active_sessions else "Contestant"
+                        error_msg = MSG_UNKNOWN_CONTESTANT.format(
+                            contestant_name=choice,
+                            contestants_list=contestants_list,
+                            example_contestant=example_contestant,
+                        )
+                    else:
+                        error_msg = "No betting rounds are currently active."
                 else:
-                    error_msg = "No betting round is currently active."
+                    # Legacy single-session mode
+                    contestants = data["betting"].get("contestants", {})
+                    if contestants:
+                        contestants_list = "\n".join(
+                            [f"• **{name}**" for name in contestants.values()]
+                        )
+                        example_contestant = list(contestants.values())[0]
+                        error_msg = MSG_UNKNOWN_CONTESTANT.format(
+                            contestant_name=choice,
+                            contestants_list=contestants_list,
+                            example_contestant=example_contestant,
+                        )
+                    else:
+                        error_msg = "No betting round is currently active."
 
                 await channel.send(
                     embed=discord.Embed(
@@ -732,30 +757,89 @@ class Betting(commands.Cog):
 
         contestant_id, contestant_name = contestant_info
 
-        # Check if user has an existing bet with an emoji (reaction bet) and
-        # this is a manual bet
-        existing_bet = data["betting"]["bets"].get(user_id)
-        old_emoji = existing_bet.get("emoji") if existing_bet else None
+        from data_manager import is_multi_session_mode, find_session_by_contestant
+        
+        if is_multi_session_mode(data):
+            # Multi-session mode: find the session for this contestant
+            session_result = find_session_by_contestant(choice, data)
+            if not session_result:
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BET: Failed - no session found for contestant: {choice}"
+                )
+                return False
+                
+            session_id, _, _ = session_result
+            session = data["betting_sessions"][session_id]
+            
+            # Check if session allows new bets
+            if session.get("status") != "open":
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BET: Failed - session {session_id} is not open (status: {session.get('status')})"
+                )
+                return False
+            
+            # Check for existing bet in this session
+            existing_bet = session["bets"].get(user_id)
+            old_emoji = existing_bet.get("emoji") if existing_bet else None
+            old_amount = existing_bet.get("amount", 0) if existing_bet else 0
 
-        # If placing a manual bet (no emoji) after a reaction bet (has emoji),
-        # remove the old reaction
-        if old_emoji and not emoji:
-            await self._remove_old_reaction_bet(data, user_id, old_emoji)
+            # If placing a manual bet (no emoji) after a reaction bet (has emoji),
+            # remove the old reaction
+            if old_emoji and not emoji:
+                await self._remove_old_reaction_bet(data, user_id, old_emoji)
+            
+            # Calculate balance requirement
+            required_additional = amount - old_amount
+            user_balance = data["balances"][user_id]
+            
+            if required_additional > user_balance:
+                self._log_reaction_debug(
+                    f"🔍 PROCESS BET: Failed - insufficient funds for session bet: required={required_additional}, balance={user_balance}"
+                )
+                return False
+            
+            # Update user balance
+            data["balances"][user_id] -= required_additional
+            
+            # Place bet in the specific session
+            session["bets"][user_id] = {
+                "amount": amount,
+                "choice": contestant_name.lower(),
+                "emoji": emoji,
+            }
+            
+            # Update contestant mapping
+            data["contestant_to_session"][contestant_name.lower()] = session_id
+            
+            save_data(data)
+            bet_result = True
+            
+        else:
+            # Legacy single-session mode
+            # Check if user has an existing bet with an emoji (reaction bet) and
+            # this is a manual bet
+            existing_bet = data["betting"]["bets"].get(user_id)
+            old_emoji = existing_bet.get("emoji") if existing_bet else None
 
-        # Use BetState to handle bet placement which will handle refunds and
-        # balance updates
-        bet_state = BetState(data)
-        self._log_reaction_debug(
-            f"🔍 PROCESS BET: Calling bet_state.place_bet({user_id}, {amount}, {contestant_name}, {emoji})"
-        )
-        bet_result = bet_state.place_bet(user_id, amount, contestant_name, emoji)
-        self._log_reaction_debug(
-            f"🔍 PROCESS BET: bet_state.place_bet returned: {bet_result}"
-        )
+            # If placing a manual bet (no emoji) after a reaction bet (has emoji),
+            # remove the old reaction
+            if old_emoji and not emoji:
+                await self._remove_old_reaction_bet(data, user_id, old_emoji)
+
+            # Use BetState to handle bet placement which will handle refunds and
+            # balance updates
+            bet_state = BetState(data)
+            self._log_reaction_debug(
+                f"🔍 PROCESS BET: Calling bet_state.place_bet({user_id}, {amount}, {contestant_name}, {emoji})"
+            )
+            bet_result = bet_state.place_bet(user_id, amount, contestant_name, emoji)
+            self._log_reaction_debug(
+                f"🔍 PROCESS BET: bet_state.place_bet returned: {bet_result}"
+            )
 
         if not bet_result:
             self._log_reaction_debug(
-                f"🔍 PROCESS BET: Failed - bet_state.place_bet returned False"
+                f"🔍 PROCESS BET: Failed - bet placement returned False"
             )
             logger.warning(
                 f"Bet placement failed for user {user_id}: {amount} on {contestant_name}"
@@ -793,13 +877,26 @@ class Betting(commands.Cog):
         self, data: Data, choice_input: str
     ) -> Optional[Tuple[str, str]]:
         """Finds a contestant ID and name based on fuzzy matching for typo tolerance."""
-        # Try fuzzy matching first
-        fuzzy_result = self._find_fuzzy_contestant(data, choice_input)
-        if fuzzy_result:
-            return fuzzy_result
+        from data_manager import is_multi_session_mode, find_session_by_contestant
+        
+        # Check if we're in multi-session mode
+        if is_multi_session_mode(data):
+            # Use multi-session contestant lookup
+            session_result = find_session_by_contestant(choice_input, data)
+            if session_result:
+                session_id, contestant_id, contestant_name = session_result
+                return contestant_id, contestant_name
+            # If no match in multi-session mode, return None
+            return None
+        else:
+            # Legacy single-session mode
+            # Try fuzzy matching first
+            fuzzy_result = self._find_fuzzy_contestant(data, choice_input)
+            if fuzzy_result:
+                return fuzzy_result
 
-        # Fall back to original method if no fuzzy match
-        return BettingUtils.find_contestant_info(data, choice_input)
+            # Fall back to original method if no fuzzy match
+            return BettingUtils.find_contestant_info(data, choice_input)
 
     async def _add_betting_reactions(
         self, message: discord.Message, data: Data
@@ -1528,71 +1625,141 @@ class Betting(commands.Cog):
 
         # Handle !bet with no arguments
         if len(args) == 0:
-            if data["betting"]["open"]:
-                # Display current betting info, similar to !bettinginfo
-                contestants = data["betting"].get("contestants", {})
-                no_args_bet_info = [
-                    f"**Betting Round Status:** {'Open' if data['betting']['open'] else 'Closed'}",
-                    f"**Contestants:** {', '.join(contestants.values())}",
-                    f"**Total Bets:** {len(data['betting']['bets'])}",
-                    f"**How to bet:** {MSG_PLACE_MANUAL_BET_INSTRUCTIONS}",
-                ]
-                live_message_link = get_live_message_link(
-                    self.bot, data, data["betting"]["open"] or data["betting"]["locked"]
-                )
-                await self._send_embed(
-                    ctx,
-                    TITLE_CURRENT_BETS_OVERVIEW,
-                    "\n".join(no_args_bet_info)
-                    + (
-                        f"\n\nLive Message: {live_message_link}"
-                        if live_message_link
-                        else ""
-                    ),
-                    COLOR_INFO,
-                )
-            elif data["betting"]["locked"]:
-                # Betting is locked - provide specific message with live link
-                live_message_link = get_live_message_link(
-                    self.bot, data, True  # Show live message link since bets are locked
-                )
-                if live_message_link:
-                    await self._send_embed(
-                        ctx,
-                        TITLE_BETTING_ERROR,
-                        MSG_BET_LOCKED_WITH_LIVE_LINK.format(
-                            live_link=live_message_link
-                        ),
-                        COLOR_ERROR,
-                    )
-                else:
-                    await self._send_embed(
-                        ctx,
-                        TITLE_BETTING_ERROR,
-                        MSG_BET_LOCKED_NO_NEW_BETS,
-                        COLOR_ERROR,
-                    )
-            else:
+            from data_manager import is_multi_session_mode
+            
+            if is_multi_session_mode(data):
+                # Multi-session mode: show info about all active sessions
+                active_sessions = data.get("active_sessions", [])
+                if active_sessions:
+                    session_info = []
+                    total_contestants = 0
+                    total_bets = 0
+                    
+                    for session_id in active_sessions:
+                        session = data["betting_sessions"].get(session_id, {})
+                        if session.get("status") == "open":
+                            contestants = session.get("contestants", {})
+                            bets = session.get("bets", {})
+                            session_info.append(f"🎯 **{session_id}**: {', '.join(contestants.values())}")
+                            total_contestants += len(contestants)
+                            total_bets += len(bets)
+                    
+                    if session_info:
+                        no_args_bet_info = [
+                            f"**Multi-Session Betting Active**",
+                            f"**Active Sessions:** {len(session_info)}",
+                            f"**Total Contestants:** {total_contestants}",
+                            f"**Total Bets:** {total_bets}",
+                            "",
+                            "**Sessions:**"
+                        ] + session_info + [
+                            "",
+                            f"**How to bet:** {MSG_PLACE_MANUAL_BET_INSTRUCTIONS}"
+                        ]
+                        
+                        await self._send_embed(
+                            ctx,
+                            TITLE_CURRENT_BETS_OVERVIEW,
+                            "\n".join(no_args_bet_info),
+                            COLOR_INFO,
+                        )
+                        return
+                
+                # No active sessions in multi-session mode
                 await self._send_embed(
                     ctx, TITLE_NO_OPEN_BETTING_ROUND, MSG_NO_ACTIVE_BET, COLOR_ERROR
                 )
-            return
+                return
+            else:
+                # Legacy single-session mode
+                if data["betting"]["open"]:
+                    # Display current betting info, similar to !bettinginfo
+                    contestants = data["betting"].get("contestants", {})
+                    no_args_bet_info = [
+                        f"**Betting Round Status:** {'Open' if data['betting']['open'] else 'Closed'}",
+                        f"**Contestants:** {', '.join(contestants.values())}",
+                        f"**Total Bets:** {len(data['betting']['bets'])}",
+                        f"**How to bet:** {MSG_PLACE_MANUAL_BET_INSTRUCTIONS}",
+                    ]
+                    live_message_link = get_live_message_link(
+                        self.bot, data, data["betting"]["open"] or data["betting"]["locked"]
+                    )
+                    await self._send_embed(
+                        ctx,
+                        TITLE_CURRENT_BETS_OVERVIEW,
+                        "\n".join(no_args_bet_info)
+                        + (
+                            f"\n\nLive Message: {live_message_link}"
+                            if live_message_link
+                            else ""
+                        ),
+                        COLOR_INFO,
+                    )
+                elif data["betting"]["locked"]:
+                    # Betting is locked - provide specific message with live link
+                    live_message_link = get_live_message_link(
+                        self.bot, data, True  # Show live message link since bets are locked
+                    )
+                    if live_message_link:
+                        await self._send_embed(
+                            ctx,
+                            TITLE_BETTING_ERROR,
+                            MSG_BET_LOCKED_WITH_LIVE_LINK.format(
+                                live_link=live_message_link
+                            ),
+                            COLOR_ERROR,
+                        )
+                    else:
+                        await self._send_embed(
+                            ctx,
+                            TITLE_BETTING_ERROR,
+                            MSG_BET_LOCKED_NO_NEW_BETS,
+                            COLOR_ERROR,
+                        )
+                else:
+                    await self._send_embed(
+                        ctx, TITLE_NO_OPEN_BETTING_ROUND, MSG_NO_ACTIVE_BET, COLOR_ERROR
+                    )
+                return
 
-        # Existing checks for active/locked bet when arguments are provided
-        if not data["betting"]["open"]:
-            await self._send_embed(
-                ctx,
-                TITLE_NO_OPEN_BETTING_ROUND,
-                MSG_NO_ACTIVE_BET_AND_MISSING_ARGS,
-                COLOR_ERROR,
-            )
-            return
+        # Validate betting is available when arguments are provided
+        from data_manager import is_multi_session_mode
+        
+        if is_multi_session_mode(data):
+            # Multi-session mode: check if any sessions are open
+            active_sessions = data.get("active_sessions", [])
+            has_open_session = False
+            
+            for session_id in active_sessions:
+                session = data["betting_sessions"].get(session_id, {})
+                if session.get("status") == "open":
+                    has_open_session = True
+                    break
+            
+            if not has_open_session:
+                await self._send_embed(
+                    ctx,
+                    TITLE_NO_OPEN_BETTING_ROUND, 
+                    MSG_NO_ACTIVE_BET_AND_MISSING_ARGS,
+                    COLOR_ERROR,
+                )
+                return
+        else:
+            # Legacy single-session mode validation
+            if not data["betting"]["open"]:
+                await self._send_embed(
+                    ctx,
+                    TITLE_NO_OPEN_BETTING_ROUND,
+                    MSG_NO_ACTIVE_BET_AND_MISSING_ARGS,
+                    COLOR_ERROR,
+                )
+                return
 
-        if data["betting"]["locked"]:
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
-            )
-            return
+            if data["betting"]["locked"]:
+                await self._send_embed(
+                    ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR
+                )
+                return
 
         amount: Optional[int] = None
         choice: Optional[str] = None
@@ -2539,6 +2706,524 @@ class Betting(commands.Cog):
                 del data["betting"]["bets"][user_id_str]
                 save_data(data)
                 schedule_live_message_update()  # Schedule batched update
+
+    # =============================================================================
+    # PHASE 3: SESSION MANAGEMENT COMMANDS
+    # =============================================================================
+
+    @commands.command(name="opensession", aliases=["os"])
+    async def open_session(
+        self,
+        ctx: commands.Context,
+        session_id: str,
+        contestant1: str,
+        contestant2: str,
+        timer_duration: Optional[int] = 300,
+    ) -> None:
+        """Create and open a new betting session.
+        
+        Usage: !opensession <session_id> <contestant1> <contestant2> [timer_duration]
+        Example: !opensession nfl_patriots_cowboys "New England Patriots" "Dallas Cowboys" 600
+        """
+        if not await self._check_permission(ctx, "manage betting sessions"):
+            return
+
+        from data_manager import is_multi_session_mode
+        
+        data = load_data()
+        
+        # Initialize multi-session mode if not already enabled
+        if not is_multi_session_mode(data):
+            # Convert to multi-session mode
+            data["betting_sessions"] = {}
+            data["active_sessions"] = []
+            data["contestant_to_session"] = {}
+            data["multi_session_mode"] = True
+
+        # Validate session ID
+        if not session_id or len(session_id) > 50:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "**Invalid session ID.**\nSession ID must be 1-50 characters long.\nExample: `nfl_game`, `lakers_vs_warriors`",
+                COLOR_ERROR,
+            )
+            return
+
+        # Check if session already exists
+        if session_id in data.get("betting_sessions", {}):
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                f"**Session '{session_id}' already exists.**\nUse `!sessioninfo {session_id}` to view details or choose a different session ID.",
+                COLOR_ERROR,
+            )
+            return
+
+        # Validate contestant names
+        contestant1 = contestant1.strip()
+        contestant2 = contestant2.strip()
+        
+        if not contestant1 or not contestant2:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "**Contestant names cannot be empty.**\nExample: `!opensession nfl_game Patriots Cowboys`",
+                COLOR_ERROR,
+            )
+            return
+
+        if contestant1.lower() == contestant2.lower():
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "**Contestant names must be different.**\nExample: `!opensession nfl_game Patriots Cowboys`",
+                COLOR_ERROR,
+            )
+            return
+
+        if len(contestant1) > 50 or len(contestant2) > 50:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "**Contestant names are too long.**\nPlease keep names under 50 characters each.",
+                COLOR_ERROR,
+            )
+            return
+
+        # Check for contestant name conflicts across sessions
+        existing_contestants = set()
+        for existing_session in data.get("betting_sessions", {}).values():
+            for contestant_name in existing_session.get("contestants", {}).values():
+                existing_contestants.add(contestant_name.lower())
+
+        if contestant1.lower() in existing_contestants:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                f"**Contestant '{contestant1}' already exists in another session.**\nContestant names must be unique across all sessions.",
+                COLOR_ERROR,
+            )
+            return
+
+        if contestant2.lower() in existing_contestants:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                f"**Contestant '{contestant2}' already exists in another session.**\nContestant names must be unique across all sessions.",
+                COLOR_ERROR,
+            )
+            return
+
+        # Validate timer duration
+        if timer_duration is not None and (timer_duration < 30 or timer_duration > 3600):
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "**Invalid timer duration.**\nTimer must be between 30 and 3600 seconds (1 hour).",
+                COLOR_ERROR,
+            )
+            return
+
+        # Create the new session
+        new_session: MultiBettingSession = {
+            "id": session_id,
+            "title": f"{contestant1} vs {contestant2}",
+            "status": "open",
+            "contestants": {
+                "c1": contestant1,
+                "c2": contestant2
+            },
+            "bets": {},
+            "timer_config": {
+                "enabled": True,
+                "duration": timer_duration or 300,
+                "lock_duration": None,
+                "close_duration": None,
+                "update_interval": 60,
+                "auto_lock_at": None,
+                "auto_close_at": None
+            },
+            "created_at": time.time(),
+            "creator_id": ctx.author.id,
+            "channel_id": ctx.channel.id,
+            "lock_time": None,
+            "close_time": None,
+            "live_message_id": None,
+            "last_update": time.time(),
+            "total_pot": 0,
+            "total_bettors": 0,
+            "winner": None,
+            "closed_at": None,
+            "closed_by": None
+        }
+
+        # Add session to data
+        data["betting_sessions"][session_id] = new_session
+        data["active_sessions"].append(session_id)
+        
+        # Update contestant mapping
+        data["contestant_to_session"][contestant1.lower()] = session_id
+        data["contestant_to_session"][contestant2.lower()] = session_id
+
+        save_data(data)
+
+        # Log session creation
+        logger.info(f"New betting session created: {session_id} ({contestant1} vs {contestant2}) by {ctx.author}")
+
+        await self._send_embed(
+            ctx,
+            f"🎯 Session '{session_id}' Created",
+            f"**Contestants:** {contestant1} vs {contestant2}\n"
+            f"**Timer:** {timer_duration or 300} seconds\n"
+            f"**Status:** Open for betting\n\n"
+            f"💡 **Users can now bet:** `!bet {contestant1} 100`\n"
+            f"📊 **View sessions:** `!listsessions`",
+            COLOR_SUCCESS,
+        )
+
+    @commands.command(name="listsessions", aliases=["ls"])
+    async def list_sessions(self, ctx: commands.Context) -> None:
+        """List all active betting sessions."""
+        from data_manager import is_multi_session_mode
+        
+        data = load_data()
+        
+        if not is_multi_session_mode(data):
+            # Check legacy single session
+            if data["betting"]["open"] or data["betting"]["locked"]:
+                contestants = data["betting"].get("contestants", {})
+                status = "🟢 Open" if data["betting"]["open"] else "🔒 Locked"
+                await self._send_embed(
+                    ctx,
+                    "📋 Betting Status",
+                    f"**Legacy Session**\n"
+                    f"**Status:** {status}\n"
+                    f"**Contestants:** {', '.join(contestants.values())}\n"
+                    f"**Total Bets:** {len(data['betting']['bets'])}\n\n"
+                    f"💡 Use `!opensession` to enable multi-session betting",
+                    COLOR_INFO,
+                )
+            else:
+                await self._send_embed(
+                    ctx,
+                    "📋 No Active Sessions",
+                    "No betting sessions are currently active.\n\n"
+                    f"🎯 **Start a session:** `!opensession session_name Contestant1 Contestant2`\n"
+                    f"📊 **Legacy betting:** `!openbet Contestant1 Contestant2`",
+                    COLOR_INFO,
+                )
+            return
+
+        # Multi-session mode
+        active_sessions = data.get("active_sessions", [])
+        
+        if not active_sessions:
+            await self._send_embed(
+                ctx,
+                "📋 No Active Sessions",
+                "No betting sessions are currently active.\n\n"
+                f"🎯 **Start a session:** `!opensession session_name Contestant1 Contestant2`",
+                COLOR_INFO,
+            )
+            return
+
+        session_list = []
+        total_bets = 0
+        open_sessions = 0
+
+        for session_id in active_sessions:
+            session = data["betting_sessions"].get(session_id, {})
+            contestants = session.get("contestants", {})
+            bets = session.get("bets", {})
+            status = session.get("status", "unknown")
+            
+            status_emoji = "🟢" if status == "open" else "🔒" if status == "locked" else "❓"
+            
+            session_list.append(
+                f"{status_emoji} **{session_id}**\n"
+                f"   └─ {', '.join(contestants.values())} ({len(bets)} bets)"
+            )
+            
+            total_bets += len(bets)
+            if status == "open":
+                open_sessions += 1
+
+        summary = [
+            f"**Active Sessions:** {len(active_sessions)}",
+            f"**Open for Betting:** {open_sessions}",
+            f"**Total Bets:** {total_bets}",
+            "",
+            "**Sessions:**"
+        ]
+
+        await self._send_embed(
+            ctx,
+            "📋 Active Betting Sessions",
+            "\n".join(summary + session_list) + f"\n\n💡 Use `!sessioninfo <session_id>` for details",
+            COLOR_INFO,
+        )
+
+    @commands.command(name="sessioninfo", aliases=["si"])
+    async def session_info(self, ctx: commands.Context, session_id: Optional[str] = None) -> None:
+        """Show detailed information about a specific session."""
+        from data_manager import is_multi_session_mode
+        
+        data = load_data()
+        
+        if not is_multi_session_mode(data):
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "Multi-session mode is not active.\nUse `!bettinginfo` for legacy session info.",
+                COLOR_ERROR,
+            )
+            return
+
+        if not session_id:
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "**Missing session ID.**\nUsage: `!sessioninfo <session_id>`\nExample: `!sessioninfo nfl_game`",
+                COLOR_ERROR,
+            )
+            return
+
+        session = data.get("betting_sessions", {}).get(session_id)
+        if not session:
+            active_sessions = data.get("active_sessions", [])
+            if active_sessions:
+                sessions_list = ', '.join(active_sessions)
+                await self._send_embed(
+                    ctx,
+                    TITLE_BETTING_ERROR,
+                    f"**Session '{session_id}' not found.**\n\nActive sessions: {sessions_list}",
+                    COLOR_ERROR,
+                )
+            else:
+                await self._send_embed(
+                    ctx,
+                    TITLE_BETTING_ERROR,
+                    f"**Session '{session_id}' not found.**\nNo active sessions exist.",
+                    COLOR_ERROR,
+                )
+            return
+
+        # Gather session details
+        contestants = session.get("contestants", {})
+        bets = session.get("bets", {})
+        status = session.get("status", "unknown")
+        timer_config = session.get("timer_config", {})
+        created_at = session.get("created_at", 0)
+        created_by = session.get("created_by")
+
+        # Calculate betting statistics
+        total_pot = sum(bet["amount"] for bet in bets.values())
+        
+        contestant_stats = {}
+        for contestant_key, contestant_name in contestants.items():
+            contestant_bets = [bet for bet in bets.values() if bet["choice"] == contestant_name.lower()]
+            contestant_stats[contestant_name] = {
+                "bets": len(contestant_bets),
+                "pot": sum(bet["amount"] for bet in contestant_bets)
+            }
+
+        # Status display
+        status_emoji = "🟢" if status == "open" else "🔒" if status == "locked" else "❌"
+        status_text = status.title()
+
+        # Timer info
+        timer_info = "Disabled"
+        if timer_config.get("enabled"):
+            duration = timer_config.get("duration", 300)
+            timer_info = f"{duration} seconds"
+
+        # Creation info
+        created_text = "Unknown"
+        if created_at > 0:
+            import datetime
+            created_time = datetime.datetime.fromtimestamp(created_at)
+            created_text = created_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        creator_text = "Unknown"
+        if created_by:
+            try:
+                creator = await self.bot.fetch_user(int(created_by))
+                creator_text = creator.display_name
+            except:
+                creator_text = f"User ID: {created_by}"
+
+        # Build info display
+        info_parts = [
+            f"**Status:** {status_emoji} {status_text}",
+            f"**Contestants:** {', '.join(contestants.values())}",
+            f"**Total Bets:** {len(bets)}",
+            f"**Total Pot:** {total_pot} coins",
+            f"**Timer:** {timer_info}",
+            f"**Created:** {created_text}",
+            f"**Creator:** {creator_text}",
+        ]
+
+        # Add betting breakdown if there are bets
+        if bets:
+            info_parts.append("")
+            info_parts.append("**Betting Breakdown:**")
+            for contestant_name, stats in contestant_stats.items():
+                percentage = (stats["pot"] / total_pot * 100) if total_pot > 0 else 0
+                info_parts.append(f"• **{contestant_name}**: {stats['bets']} bets, {stats['pot']} coins ({percentage:.1f}%)")
+
+        await self._send_embed(
+            ctx,
+            f"📊 Session Info: {session_id}",
+            "\n".join(info_parts),
+            COLOR_INFO,
+        )
+
+    @commands.command(name="closesession", aliases=["cs"])
+    async def close_session(self, ctx: commands.Context, session_id: str, winner: Optional[str] = None) -> None:
+        """Close a specific session and optionally declare a winner.
+        
+        Usage: !closesession <session_id> [winner_name]
+        Example: !closesession nfl_game Patriots
+        """
+        if not await self._check_permission(ctx, "close betting sessions"):
+            return
+
+        from data_manager import is_multi_session_mode
+        
+        data = load_data()
+        
+        if not is_multi_session_mode(data):
+            await self._send_embed(
+                ctx,
+                TITLE_BETTING_ERROR,
+                "Multi-session mode is not active.\nUse `!closebet` for legacy session management.",
+                COLOR_ERROR,
+            )
+            return
+
+        session = data.get("betting_sessions", {}).get(session_id)
+        if not session:
+            active_sessions = data.get("active_sessions", [])
+            if active_sessions:
+                sessions_list = ', '.join(active_sessions)
+                await self._send_embed(
+                    ctx,
+                    TITLE_BETTING_ERROR,
+                    f"**Session '{session_id}' not found.**\n\nActive sessions: {sessions_list}",
+                    COLOR_ERROR,
+                )
+            else:
+                await self._send_embed(
+                    ctx,
+                    TITLE_BETTING_ERROR,
+                    f"**Session '{session_id}' not found.**\nNo active sessions exist.",
+                    COLOR_ERROR,
+                )
+            return
+
+        contestants = session.get("contestants", {})
+        bets = session.get("bets", {})
+
+        # If winner is specified, validate it
+        if winner:
+            winner_found = False
+            for contestant_name in contestants.values():
+                if contestant_name.lower() == winner.lower():
+                    winner = contestant_name  # Use exact case from session
+                    winner_found = True
+                    break
+            
+            if not winner_found:
+                contestants_list = ', '.join(contestants.values())
+                await self._send_embed(
+                    ctx,
+                    TITLE_BETTING_ERROR,
+                    f"**Winner '{winner}' not found in session '{session_id}'.**\n\nValid contestants: {contestants_list}",
+                    COLOR_ERROR,
+                )
+                return
+
+        # Initialize results text
+        results_text = []
+        
+        # Calculate payouts if there's a winner and bets exist
+        if winner and bets:
+            total_pot = sum(bet["amount"] for bet in bets.values())
+            winning_bets = [bet for bet in bets.values() if bet["choice"] == winner.lower()]
+            winning_pot = sum(bet["amount"] for bet in winning_bets)
+            
+            # Process payouts
+            if winning_bets:
+                # Distribute winnings proportionally
+                for user_id, bet in bets.items():
+                    if bet["choice"] == winner.lower():
+                        # Winner gets their share of the total pot
+                        winnings = int((bet["amount"] / winning_pot) * total_pot)
+                        data["balances"][user_id] += winnings
+                        
+            # Create results summary
+            total_bettors = len(bets)
+            winners_count = len(winning_bets)
+            
+            results_text = [
+                f"🏆 **{winner}** wins!",
+                f"📊 **Round Summary:**",
+                f"• Total Pot: `{total_pot}` coins",
+                f"• Total Bettors: `{total_bettors}`",
+                f"• Winners: `{winners_count}` {'player' if winners_count == 1 else 'players'}",
+            ]
+            
+            if winners_count == 0:
+                results_text.append("• Result: All coins lost to the house")
+            elif winners_count == 1:
+                results_text.append(f"• Winner takes all: `{total_pot}` coins")
+            else:
+                results_text.append("• Pot shared among winners")
+
+        # Remove session from active list and update mappings
+        if session_id in data.get("active_sessions", []):
+            data["active_sessions"].remove(session_id)
+        
+        # Remove contestants from mapping
+        for contestant_name in contestants.values():
+            data.get("contestant_to_session", {}).pop(contestant_name.lower(), None)
+        
+        # Mark session as closed
+        session["status"] = "closed"
+        if winner:
+            session["winner"] = winner
+        session["closed_at"] = time.time()
+        session["closed_by"] = str(ctx.author.id)
+
+        save_data(data)
+
+        # Send results
+        if winner and bets:
+            await self._send_embed(
+                ctx,
+                f"🏆 Session '{session_id}' Complete",
+                "\n".join(results_text),
+                COLOR_SUCCESS,
+            )
+        elif winner:
+            await self._send_embed(
+                ctx,
+                f"🏆 Session '{session_id}' Complete",
+                f"**{winner}** wins!\n\nNo bets were placed in this session.",
+                COLOR_SUCCESS,
+            )
+        else:
+            await self._send_embed(
+                ctx,
+                f"🔒 Session '{session_id}' Closed",
+                f"Session closed without declaring a winner.\n\n"
+                f"If you want to declare a winner later, you'll need to handle payouts manually.",
+                COLOR_INFO,
+            )
+
+        # Log session closure
+        logger.info(f"Session closed: {session_id} (winner: {winner or 'None'}) by {ctx.author}")
 
 
 async def setup(bot: commands.Bot):
