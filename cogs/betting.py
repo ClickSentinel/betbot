@@ -1149,6 +1149,7 @@ class Betting(commands.Cog):
                 COLOR_SUCCESS,
             )
             # Reset betting state even with no bets
+            self.bet_state.update_data(data)
             self.bet_state.declare_winner(winner_name)
             return
 
@@ -1162,6 +1163,7 @@ class Betting(commands.Cog):
         )
 
         # Process winner through BetState
+        self.bet_state.update_data(data)
         winner_info = self.bet_state.declare_winner(winner_name)
 
         # Log winner declaration

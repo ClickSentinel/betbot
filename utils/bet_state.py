@@ -155,6 +155,11 @@ class BetState:
     def __init__(self, data: Data):
         self.data = data
         self.economy = Economy(data)
+    
+    def update_data(self, data: Data) -> None:
+        """Update the BetState with fresh data."""
+        self.data = data
+        self.economy = Economy(data)
 
     def get_betting_session(self) -> BettingSession:
         """Get current betting session state."""
