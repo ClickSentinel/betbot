@@ -113,8 +113,15 @@ class Betting(commands.Cog):
         # Track last enforcement time per user to prevent spam
         self._last_enforcement: Dict[int, float] = {}  # user_id -> timestamp
 
+        # Toggle for extensive reaction debug logging (set to False to reduce log noise)
+        self.enable_reaction_debug_logging: bool = False
+
     def _log_reaction_debug(self, message: str) -> None:
         """Log reaction debug messages to both console and file."""
+        # Early exit if debug logging is disabled
+        if not self.enable_reaction_debug_logging:
+            return
+            
         import datetime
 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -2272,6 +2279,25 @@ class Betting(commands.Cog):
             len(
                 data['betting']['bets'])}"
         await ctx.send(f"```\n{debug_info}\n```")
+
+    @commands.command(name="togglereactiondebug", aliases=["trd"])
+    @commands.has_permissions(manage_guild=True)
+    async def toggle_reaction_debug(self, ctx: commands.Context) -> None:
+        """Toggle extensive reaction debug logging on/off."""
+        self.enable_reaction_debug_logging = not self.enable_reaction_debug_logging
+        
+        status = "**enabled**" if self.enable_reaction_debug_logging else "**disabled**"
+        description = f"Extensive reaction debug logging is now {status}."
+        
+        if self.enable_reaction_debug_logging:
+            description += f"\n\nDebug logs will be written to: `{self.reaction_log_file}`"
+        
+        await self._send_embed(
+            ctx,
+            "🔧 Reaction Debug Logging Toggled",
+            description,
+            COLOR_SUCCESS if self.enable_reaction_debug_logging else COLOR_WARNING,
+        )
 
     @commands.command(name="forceclose", aliases=["fc"])
     async def force_close_betting(self, ctx: commands.Context) -> None:
