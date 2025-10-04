@@ -2309,6 +2309,15 @@ class Betting(commands.Cog):
     async def on_raw_reaction_add(
         self, payload: discord.RawReactionActionEvent
     ) -> None:
+        # Ignore bot's own reactions first (cheapest check)
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+
+        # Quick check: if betting is not open, don't process any reaction additions
+        data = load_data()
+        if not data["betting"]["open"]:
+            return  # Betting is closed, no need to process reactions
+
         self._log_reaction_debug(
             f"🔍 REACTION ADD: user_id={
                 payload.user_id}, emoji={
@@ -2316,27 +2325,6 @@ class Betting(commands.Cog):
                 payload.message_id}"
         )
 
-        # Debug bot user ID detection
-        bot_user_id = self.bot.user.id if self.bot.user else None
-        self._log_reaction_debug(
-            f"🔍 REACTION ADD: bot_user_id={bot_user_id}, payload_user_id={
-                payload.user_id}"
-        )
-        self._log_reaction_debug(
-            f"🔍 REACTION ADD: bot.user exists={
-                self.bot.user is not None}"
-        )
-        self._log_reaction_debug(
-            f"🔍 REACTION ADD: IDs match={
-                payload.user_id == bot_user_id}"
-        )
-
-        # Ignore bot's own reactions
-        if self.bot.user and payload.user_id == self.bot.user.id:
-            self._log_reaction_debug(f"🔍 REACTION ADD: Ignoring bot's own reaction")
-            return
-
-        data = load_data()
         main_msg_id, main_chan_id = get_live_message_info(data)
         secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
 
@@ -2369,32 +2357,6 @@ class Betting(commands.Cog):
         self._log_reaction_debug(
             f"🔍 REACTION ADD: Valid betting message reaction detected"
         )
-
-        # Ensure betting is open
-        self._log_reaction_debug(
-            f"🔍 REACTION ADD: Checking if betting is open: {
-                data['betting']['open']}"
-        )
-        if not data["betting"]["open"]:
-            self._log_reaction_debug(
-                f"🔍 REACTION ADD: Betting is closed, removing reaction"
-            )
-            # If betting is locked, remove the reaction and inform the user
-            # (optional, but good UX)
-            channel = self.bot.get_channel(payload.channel_id)
-            if isinstance(channel, discord.TextChannel):
-                try:
-                    message = await channel.fetch_message(payload.message_id)
-                    user = await self.bot.fetch_user(payload.user_id)
-                    await message.remove_reaction(payload.emoji, user)
-                    # await self._send_embed(channel, TITLE_BETTING_ERROR,
-                    # MSG_BET_LOCKED_NO_NEW_BETS, COLOR_ERROR) # Can't use ctx
-                    # here
-                except discord.NotFound:
-                    pass
-                except discord.HTTPException as e:
-                    print(f"Error removing reaction or sending message: {e}")
-            return
 
         # Get message and user objects
         self._log_reaction_debug(
@@ -2655,13 +2617,17 @@ class Betting(commands.Cog):
         if self.bot.user and payload.user_id == self.bot.user.id:
             return
 
+        # Quick check: if betting is not open, don't process any reaction removals
+        data = load_data()
+        if not data["betting"]["open"]:
+            return  # Cannot unbet if betting is not open
+
         # Check if this is a programmatic removal (to prevent race conditions)
         if self._is_programmatic_removal(
             payload.message_id, payload.user_id, str(payload.emoji)
         ):
             return  # This was a programmatic removal, don't process it as user action
 
-        data = load_data()
         main_msg_id, main_chan_id = get_live_message_info(data)
         secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
 
@@ -2676,10 +2642,6 @@ class Betting(commands.Cog):
 
         if not (is_main_message or is_secondary_message):
             return  # Not a reaction on a live betting message
-
-        # Ensure betting is open
-        if not data["betting"]["open"]:
-            return  # Cannot unbet if betting is not open
 
         # Get user object
         try:
