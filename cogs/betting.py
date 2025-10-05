@@ -65,6 +65,7 @@ from data_manager import (
     MultiBettingSession,
     TimerConfig,
 )
+from data_manager import get_bets, set_bet, remove_bet, is_multi_session_mode
 from data_manager import UserBet
 from utils.live_message import (
     get_live_message_info,
@@ -80,7 +81,7 @@ from utils.live_message import (
     schedule_live_message_update_for_session,
     initialize_live_message_scheduler,
 )
-from utils.bet_state import BetState
+from utils.bet_state import BetState, SessionBetState
 from utils.bet_state import WinnerInfo
 
 
@@ -525,7 +526,8 @@ class Betting(commands.Cog):
         self, data: Data, input_name: str
     ) -> Optional[Tuple[str, str]]:
         """Find contestant with fuzzy matching for typo tolerance."""
-        contestants = data["betting"].get("contestants", {})
+        # Use accessor for compatibility with multi-session mode
+        contestants = data.get("betting", {}).get("contestants", {})
         if not contestants:
             return None
 
@@ -840,8 +842,9 @@ class Betting(commands.Cog):
             data["balances"][user_id] -= required_additional
 
             # Place bet using accessor
-            from typing import cast
-            bet_payload = cast(UserBet, {"amount": amount, "choice": contestant_name.lower(), "emoji": emoji})
+            from utils.bet_state import make_bet_info
+
+            bet_payload = make_bet_info(amount, contestant_name, emoji)
             set_bet(data, session_id, user_id, bet_payload)
 
             # Update contestant mapping
@@ -1157,50 +1160,112 @@ class Betting(commands.Cog):
     async def _process_winner_declaration(
         self, ctx: commands.Context, data: Data, winner_name: str
     ) -> None:
-        """Handles the logic for declaring a winner, distributing coins, and resetting the bet state."""
-        contestants = data["betting"].get("contestants", {})
+        """Handles the logic for declaring a winner, distributing coins, and resetting the bet state.
 
-        # Find the winner's ID (e.g., "1" or "2") based on name
-        winner_id: Optional[str] = None
-        for c_id, c_name in contestants.items():
-            if c_name.lower() == winner_name.lower():
-                winner_id = c_id
-                break
+        This function is now session-aware: if a session is found for the winner
+        (via contestant name lookup in multi-session mode), the SessionBetState
+        wrapper is used to calculate results and declare the winner for that
+        session. Otherwise, the legacy BetState behavior is preserved.
+        """
 
-        if winner_id is None:
-            await self._send_embed(
-                ctx,
-                TITLE_BETTING_ERROR,
-                f"Contestant '{winner_name}' not found.",
-                COLOR_ERROR,
+        # Attempt to resolve a session for the given winner (multi-session mode)
+        from data_manager import find_session_by_contestant
+
+        session_tuple = find_session_by_contestant(winner_name, data)
+        if session_tuple:
+            # Multi-session path: operate on the resolved session dict
+            session_id = session_tuple[0]
+            session = data.get("betting_sessions", {}).get(session_id, {})
+
+            # Ensure contestants exist in session
+            contestants = session.get("contestants", {})
+            if not contestants:
+                await self._send_embed(
+                    ctx,
+                    TITLE_BETTING_ERROR,
+                    f"Contestant '{winner_name}' not found in session.",
+                    COLOR_ERROR,
+                )
+                return
+
+            # Check if there are any bets in this session
+            session_bets = session.get("bets", {})
+            if not session_bets:
+                await self._send_embed(
+                    ctx,
+                    "Round Complete",
+                    f"No bets were placed in this session. Declared winner: {winner_name} (no payouts).",
+                    COLOR_SUCCESS,
+                )
+                # Reset session state even with no bets
+                from typing import cast
+                from utils.bet_state import BettingSession as _BettingSession
+
+                sbs = SessionBetState(data, cast(_BettingSession, session))
+                sbs.declare_winner(winner_name)
+                return
+
+            # Calculate statistics BEFORE processing winner (which clears bet data)
+            total_bettors = len(session_bets)
+            total_pot = sum(bet["amount"] for bet in session_bets.values())
+            bets_on_winner = sum(
+                1
+                for bet in session_bets.values()
+                if bet["choice"].lower() == winner_name.lower()
             )
-            return
 
-        # Check if there are any bets before proceeding
-        if not data["betting"]["bets"]:
-            await self._send_embed(
-                ctx,
-                "Round Complete",
-                f"No bets were placed in this round. {winner_name} wins by default!",
-                COLOR_SUCCESS,
+            # Process winner through SessionBetState
+            from typing import cast
+            from utils.bet_state import BettingSession as _BettingSession
+
+            sbs = SessionBetState(data, cast(_BettingSession, session))
+            winner_info = sbs.declare_winner(winner_name)
+
+        else:
+            # Legacy single-session path (unchanged behavior)
+            contestants = data["betting"].get("contestants", {})
+
+            # Find the winner's ID (e.g., "1" or "2") based on name
+            winner_id: Optional[str] = None
+            for c_id, c_name in contestants.items():
+                if c_name.lower() == winner_name.lower():
+                    winner_id = c_id
+                    break
+
+            if winner_id is None:
+                await self._send_embed(
+                    ctx,
+                    TITLE_BETTING_ERROR,
+                    f"Contestant '{winner_name}' not found.",
+                    COLOR_ERROR,
+                )
+                return
+
+            # Check if there are any bets before proceeding
+            if not get_bets(data):
+                await self._send_embed(
+                    ctx,
+                    "Round Complete",
+                    f"No bets were placed in this round. Declared winner: {winner_name} (no payouts).",
+                    COLOR_SUCCESS,
+                )
+                # Reset betting state even with no bets
+                self.bet_state.update_data(data)
+                self.bet_state.declare_winner(winner_name)
+                return
+
+            # Calculate statistics BEFORE processing winner (which clears bet data)
+            total_bettors = len(get_bets(data))
+            total_pot = sum(bet["amount"] for bet in get_bets(data).values())
+            bets_on_winner = sum(
+                1
+                for bet in get_bets(data).values()
+                if bet["choice"].lower() == winner_name.lower()
             )
-            # Reset betting state even with no bets
+
+            # Process winner through BetState
             self.bet_state.update_data(data)
-            self.bet_state.declare_winner(winner_name)
-            return
-
-        # Calculate statistics BEFORE processing winner (which clears bet data)
-        total_bettors = len(data["betting"]["bets"])
-        total_pot = sum(bet["amount"] for bet in data["betting"]["bets"].values())
-        bets_on_winner = sum(
-            1
-            for bet in data["betting"]["bets"].values()
-            if bet["choice"].lower() == winner_name.lower()
-        )
-
-        # Process winner through BetState
-        self.bet_state.update_data(data)
-        winner_info = self.bet_state.declare_winner(winner_name)
+            winner_info = self.bet_state.declare_winner(winner_name)
 
         # Log winner declaration
         logger.info(
@@ -1484,7 +1549,7 @@ class Betting(commands.Cog):
                 await self._send_embed(
                     ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED, COLOR_ERROR
                 )
-            return
+                return
 
         clear_live_message_info(data)
         self._cancel_bet_timer()
@@ -2090,7 +2155,7 @@ class Betting(commands.Cog):
 
         # Check if user is changing an existing bet
         user_id_str = str(ctx.author.id)
-        existing_bet = data["betting"]["bets"].get(user_id_str)
+        existing_bet = get_bets(data).get(user_id_str)
         old_contestant = existing_bet.get("choice") if existing_bet else None
         old_amount = existing_bet.get("amount", 0) if existing_bet else 0
 
@@ -2304,7 +2369,7 @@ class Betting(commands.Cog):
         # Ensure the user has an account
         ensure_user(data, str(ctx.author.id))  # Fix: Convert to string
 
-        user_bet = data["betting"]["bets"].get(str(ctx.author.id))
+        user_bet = get_bets(data).get(str(ctx.author.id))
         if not user_bet:
             await self._send_embed(
                 ctx,
@@ -2486,14 +2551,19 @@ class Betting(commands.Cog):
             )
             return
 
-        # Place the bet
-        data["betting"]["bets"][str(user.id)] = {
-            "amount": amount,
-            "choice": contestant_name.lower(),
-            "emoji": None,  # Manual bets do not have an associated emoji
-        }
+        # Place the bet using accessor (session-aware)
+        from utils.bet_state import make_bet_info
+
+        bet_payload = make_bet_info(amount, contestant_name, None)
+        # Determine if this contestant belongs to a session
+        from data_manager import find_session_by_contestant
+
+        session_tuple = find_session_by_contestant(contestant_name, data)
+        session_id_for_set = session_tuple[0] if session_tuple else None
+
+        # Deduct the amount from user's balance and persist
         data["balances"][str(user.id)] -= amount
-        save_data(data)
+        set_bet(data, session_id_for_set, str(user.id), bet_payload)
 
         # Schedule live message update (batched for better performance)
         schedule_live_message_update()
@@ -3040,14 +3110,17 @@ class Betting(commands.Cog):
                     return
 
         # Fallback to legacy bets
-        contestant_name = data["betting"]["contestants"].get(contestant_id)
-        if user_id_str in data["betting"]["bets"]:
-            bet_info = data["betting"]["bets"][user_id_str]
+        contestant_name = data.get("betting", {}).get("contestants", {}).get(contestant_id)
+        from data_manager import get_bets, remove_bet
+
+        legacy_bets = get_bets(data)
+        if user_id_str in legacy_bets:
+            bet_info = legacy_bets[user_id_str]
             if contestant_name and bet_info.get("choice") == contestant_name.lower():
                 # When removing a bet, just process the refund and cleanup
                 refund_amount = bet_info.get("amount", 0)
                 data["balances"][user_id_str] = data["balances"].get(user_id_str, 0) + refund_amount
-                del data["betting"]["bets"][user_id_str]
+                remove_bet(data, None, user_id_str)
                 save_data(data)
                 schedule_live_message_update()  # Schedule batched update
 

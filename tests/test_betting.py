@@ -10,6 +10,9 @@ from tests.conftest import setup_member_with_role, assert_embed_contains, MockRo
 from utils.live_message import update_live_message
 from utils.bet_state import BetState
 from cogs.betting import Betting
+from data_manager import set_bet
+from utils.bet_state import make_bet_info
+from unittest.mock import patch
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord
@@ -161,9 +164,13 @@ class TestBetting:
         test_data["betting"]["open"] = False
         test_data["betting"]["locked"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
-        test_data["betting"]["bets"] = {
-            user_id: {"amount": 100, "choice": "alice", "emoji": "🔴"}
-        }
+        from data_manager import Data
+        from typing import cast
+        from data_manager import set_bet
+        from utils.bet_state import make_bet_info
+        from unittest.mock import patch
+        with patch("data_manager.save_data"):
+            set_bet(cast(Data, test_data), None, user_id, make_bet_info(100, "alice", "🔴"))
         test_data["balances"][user_id] = 900  # After their bet was placed
         betting_cog._send_embed = AsyncMock()
 
@@ -205,11 +212,8 @@ class TestBetting:
         test_data["betting"]["open"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
         test_data["balances"][str(mock_ctx.author.id)] = 1000
-        test_data["betting"]["bets"][str(mock_ctx.author.id)] = {
-            "amount": 300,
-            "choice": "alice",
-            "emoji": None,
-        }
+        with patch("data_manager.save_data"):
+            set_bet(test_data, None, str(mock_ctx.author.id), make_bet_info(300, "alice", None))
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Change bet to Bob
@@ -236,11 +240,8 @@ class TestBetting:
         test_data["betting"]["open"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
         test_data["balances"][str(mock_ctx.author.id)] = 500  # Only 500 available
-        test_data["betting"]["bets"][str(mock_ctx.author.id)] = {
-            "amount": 300,
-            "choice": "alice",
-            "emoji": None,
-        }
+        with patch("data_manager.save_data"):
+            set_bet(test_data, None, str(mock_ctx.author.id), make_bet_info(300, "alice", None))
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Increase bet to 700 (needs 400 more, has 500 available)
@@ -273,11 +274,8 @@ class TestBetting:
         test_data["betting"]["open"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
         test_data["balances"][str(mock_ctx.author.id)] = 200
-        test_data["betting"]["bets"][str(mock_ctx.author.id)] = {
-            "amount": 300,
-            "choice": "alice",
-            "emoji": None,
-        }
+        with patch("data_manager.save_data"):
+            set_bet(test_data, None, str(mock_ctx.author.id), make_bet_info(300, "alice", None))
         betting_cog._send_embed = AsyncMock()
 
         # Execute - Try to increase bet to 900 (needs 600 more, only has 200)
@@ -346,11 +344,8 @@ class TestBetting:
             "1": "Alice",
             "2": "Bob",
         }  # Add contestants
-        test_data["betting"]["bets"][user_id] = {
-            "amount": 50,
-            "choice": "alice",
-            "emoji": "🔴",  # This indicates it was a reaction bet
-        }
+        with patch("data_manager.save_data"):
+            set_bet(test_data, None, user_id, make_bet_info(50, "alice", "🔴"))
         test_data["balances"][user_id] = 500
 
         # Mock the reaction removal method
@@ -476,10 +471,14 @@ class TestBetting:
         test_data["betting"]["open"] = True
         test_data["betting"]["locked"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
-        test_data["betting"]["bets"] = {
-            user_id_1: {"amount": 1000, "choice": "Alice", "emoji": None},
-            user_id_2: {"amount": 500, "choice": "Bob", "emoji": None},
-        }
+        from data_manager import Data
+        from typing import cast
+        from data_manager import set_bet
+        from utils.bet_state import make_bet_info
+        from unittest.mock import patch
+        with patch("data_manager.save_data"):
+            set_bet(cast(Data, test_data), None, user_id_1, make_bet_info(1000, "Alice", None))
+            set_bet(cast(Data, test_data), None, user_id_2, make_bet_info(500, "Bob", None))
         test_data["balances"] = {user_id_1: 5000, user_id_2: 3000}
 
         # Mock the betting cog's permission check and user fetching
@@ -726,13 +725,15 @@ class TestBetting:
         test_data["betting"]["open"] = True
         test_data["betting"]["locked"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
-        test_data["betting"]["bets"] = {
-            # Winner
-            user_id_1: {"amount": 1000, "choice": "Alice", "emoji": None},
-            # Winner
-            user_id_2: {"amount": 500, "choice": "Alice", "emoji": None},
-            user_id_3: {"amount": 300, "choice": "Bob", "emoji": None},  # Loser
-        }
+        from data_manager import Data
+        from typing import cast
+        from data_manager import set_bet
+        from utils.bet_state import make_bet_info
+        from unittest.mock import patch
+        with patch("data_manager.save_data"):
+            set_bet(cast(Data, test_data), None, user_id_1, make_bet_info(1000, "Alice", None))
+            set_bet(cast(Data, test_data), None, user_id_2, make_bet_info(500, "Alice", None))
+            set_bet(cast(Data, test_data), None, user_id_3, make_bet_info(300, "Bob", None))
         test_data["balances"] = {user_id_1: 5000, user_id_2: 3000, user_id_3: 2000}
 
         # Mock user fetching
@@ -844,7 +845,7 @@ class TestBetting:
 
         # Set up test data with contestants but no bets
         test_data["betting"]["contestants"] = {"1": "alice", "2": "bob"}
-        test_data["betting"]["bets"] = {}  # No bets placed
+        test_data["betting"].setdefault("bets", {})  # No bets placed
         # Must be locked to declare winner
         test_data["betting"]["locked"] = True
 
@@ -871,7 +872,7 @@ class TestBetting:
         # Should show "Round Complete" title and mention no bets were placed
         assert call_args[1] == "Round Complete"  # title
         assert "No bets were placed" in call_args[2]  # description
-        assert "alice wins by default" in call_args[2]  # winner mentioned
+        assert "declared winner: alice" in call_args[2].lower()  # winner mentioned
         assert call_args[3] == COLOR_SUCCESS  # success color
 
         # Should still call bet_state.declare_winner to reset state

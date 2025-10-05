@@ -25,38 +25,6 @@ This major update transforms BetBot from a good Discord betting bot into a produ
 
 ## 🆕 New Features
 
-### Multi-Session Betting (October 5, 2025)
-
-- **Per-session live messages**: each betting session can now have its own live message (embed) and channel, allowing multiple independent rounds to run in parallel without visual or state interference.
-- **Numeric session IDs**: sessions are identified by small integer IDs (1, 2, 3, ...). This simplifies user/admin references (`!openbet 2`, `!lock 2`) and makes command parsing predictable.
-- **Per-session timers**: timers (auto-close and countdown display) are stored per-session and reflected in each live message independently. Timer configuration supports auto-close timestamps and human-friendly countdown footers.
-- **Unified lock/close commands**: `!lock`, `!close`, and other moderation commands accept an optional session id. When omitted, behavior falls back to the legacy single-session mode for compatibility.
-- **Canonical bet storage + accessor layer**: to avoid divergent state between manual `!bet` and reaction-based bets, a thin accessor layer was added in `betbot/data_manager.py`:
-  - `get_bets(data, session_id=None)`
-  - `set_bet(data, session_id, user_id, bet_info)`
-  - `remove_bet(data, session_id, user_id)`
-  These functions provide a single API so all code paths read/write the same canonical storage (session-aware when applicable).
-- **Reaction handlers made session-aware**: reaction add/remove flows now resolve whether the reacted message is a session-specific live message and include `session_id` in pending reaction entries. This ensures that reaction bets and manual `!bet` operations converge on the same session data.
-- **Live-message update suppression**: the live-message batcher was hardened so the final lock/winner state isn't overwritten by queued updates; updates targeted at a session will not clear a final winner embed.
-- **Backward compatibility & migration**: legacy single-session behavior is preserved. Accessors map calls to the legacy `data["betting"]` when `session_id` is omitted. A migration path is recommended for converting an existing single `betting` object into a session if you want to opt-in to multi-session mode.
-- **Commands and UX changes** (high level):
-  - `!openbet [session_id] [title]` — open a new session or open under a specific numeric id
-  - `!lock [session_id]` / `!close [session_id]` — lock or close a session (numeric id optional)
-  - `!mybet [session_id?]` — report a user's bets for the specified session or legacy session when omitted
-  - `!bettinginfo [session_id?]` — show session-specific summary and timer data
-
-- **Tests & validation**: new unit and integration tests were added:
-  - `tests/test_accessors.py` — accessor behavior (get/set/remove)
-  - `tests/test_process_bet_session.py` — ensures `_process_bet` writes to session storage and updates balances correctly
-  These tests were used to validate the accessor + session refactors; the test-suite run passed locally (166 passed, 0 failed) after iterative fixes.
-
-- **Developer notes / next steps**:
-  - Implement a `SessionBetState` thin wrapper to allow existing `BetState` refund/balance logic to operate against a session dict (planned next step).
-  - Refactor reporting commands (`!mybet`, `!bettinginfo`, `!debug`) to fully enumerate sessions and present per-session summaries by default.
-  - Update `betting_timer.py` to iterate active sessions and schedule per-session updates (recommended follow-up).
-
-This multi-session feature substantially improves flexibility for running parallel matches, tournaments, or separate betting channels while maintaining compatibility with existing single-session workflows.
-
 ### Advanced Reaction Batching System
 - **Smart Multi-Reaction Handling**: When users rapidly click multiple reaction emojis, the system intelligently batches these with a 1-second delay
 - **Final Selection Processing**: Only the last reaction is processed, preventing bet conflicts
@@ -80,7 +48,7 @@ This multi-session feature substantially improves flexibility for running parall
 
 ### Enhanced Error Handling & User Experience
 - **Contradictory Output Fix**: Resolved bug where bot showed "Round Complete" with statistics but also "No bets were placed"
-- **Clear No-Bets Messaging**: When no bets exist, shows "No bets were placed in this round. [Winner] wins by default!"
+- **Clear No-Bets Messaging**: When no bets exist, shows a neutral message such as "No bets were placed in this round. Declared winner: [Winner] (no payouts)." — this avoids implying an automatic payout when no bets were placed.
 - **Consistent State Management**: Fixed logic flow where statistics were calculated before bet clearing but summary after
 
 ## 🧪 Comprehensive Testing Suite
@@ -231,3 +199,44 @@ This update represents a fundamental improvement in BetBot's reliability, user e
   - Added accessor helpers and consolidated multi-session betting writes so reaction-based and manual bets use the same canonical storage.
   - Updated reaction handlers to be session-aware and added tests validating the accessor behavior and session write flows.
   - Committed changes on `dev` branch: "bet: add accessor helpers, refactor _process_bet to use session-aware storage, add tests and update audit doc".
+
+  ## 🔁 Patch (2025-10-05) - Follow-up
+
+  Further improvements and consolidation following the earlier patch:
+
+  - Added canonical betting accessors in `betbot/data_manager.py`:
+    - `get_bets(data, session_id=None)`
+    - `set_bet(data, session_id, user_id, bet_info)`
+    - `remove_bet(data, session_id, user_id)`
+    These unify reads/writes across legacy single-session and new multi-session storage.
+
+  - Introduced `SessionBetState` and `make_bet_info` in `betbot/utils/bet_state.py`:
+    - `SessionBetState` wraps the existing `BetState` economics logic to operate on per-session dicts.
+    - `make_bet_info(amount, choice, emoji)` standardizes bet payload creation and resolves typing issues.
+
+  - Refactored `cogs/betting.py`:
+    - `_process_bet`, winner declaration, reaction handlers, and manual bet flows updated to use the accessor API.
+    - Reaction batching/hardening improved so pending reaction entries include `session_id` when applicable.
+    - Live-message updater suppression improved to avoid final-state overwrite.
+
+  - Tests and scripts updated to use the accessor API:
+    - Replaced direct `data["betting"]["bets"][...] = ...` mutations with `set_bet(...)` across many tests.
+    - Patched `data_manager.save_data` in tests to avoid disk writes when calling `set_bet` during test setup.
+    - Added `cast(Data, ...)` where needed to satisfy type-checkers in tests that use plain dicts.
+    - New tests added/updated: `tests/test_accessors.py`, `tests/test_reaction_system_core.py`, `tests/test_process_bet_session.py` (and multiple updates across existing test modules).
+
+  - Miscellaneous fixes:
+    - Prevented filesystem path leaks in Discord debug logging by centralizing debug toggle and log file behavior.
+    - Minor type-check fixes and explicit casts to keep static analysis clean.
+
+  Pending / Next Steps
+  - Finish migrating remaining tests and manual scripts that still directly mutate `data["betting"]["bets"]` (archived tests were left untouched).
+  - Make `utils/betting_timer.py` fully session-aware (iterate and operate on `active_sessions`).
+  - Replace residual direct legacy `BetState` call-sites with `SessionBetState` where applicable.
+  - Address a small set of AsyncMock warnings in a couple of tests (in-progress cleanup).
+
+  Verification
+  - Ran updated test files repeatedly during development. Representative run of updated tests: 166 passed, 0 failed. A focused run of modified files returned 48 passed, 0 failed.
+
+  Commit Notes
+  - Local branch `dev` contains multiple commits describing these changes; recommended to review branch before merge.
