@@ -77,6 +77,7 @@ from utils.live_message import (
     get_live_message_link,
     get_secondary_live_message_info,
     schedule_live_message_update,
+    schedule_live_message_update_for_session,
     initialize_live_message_scheduler,
 )
 from utils.bet_state import BetState
@@ -2662,14 +2663,18 @@ class Betting(commands.Cog):
                 payload.message_id}"
         )
 
+        # Determine if this reaction is tied to a session-specific live message
+        session_id_for_msg = None
+        for sid, sess in data.get("betting_sessions", {}).items():
+            if sess.get("live_message_id") == payload.message_id and sess.get("channel_id") == payload.channel_id:
+                session_id_for_msg = sid
+                break
+
         main_msg_id, main_chan_id = get_live_message_info(data)
         secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
 
         self._log_reaction_debug(
-            f"🔍 REACTION ADD: main_msg={main_msg_id}, main_chan={main_chan_id}"
-        )
-        self._log_reaction_debug(
-            f"🔍 REACTION ADD: secondary_msg={secondary_msg_id}, secondary_chan={secondary_chan_id}"
+            f"🔍 REACTION ADD: session_msg={session_id_for_msg}, main_msg={main_msg_id}, main_chan={main_chan_id}"
         )
 
         # Check if the reaction is on one of the live betting messages
@@ -2680,6 +2685,7 @@ class Betting(commands.Cog):
             payload.message_id == secondary_msg_id
             and payload.channel_id == secondary_chan_id
         )
+        is_session_message = session_id_for_msg is not None
 
         self._log_reaction_debug(
             f"🔍 REACTION ADD: is_main_message={is_main_message}, is_secondary_message={is_secondary_message}"
@@ -2747,7 +2753,12 @@ class Betting(commands.Cog):
             await message.remove_reaction(payload.emoji, user)
             return
 
-        contestant_name = data["betting"]["contestants"].get(contestant_id)
+        # Resolve contestant name from session if this is a session message
+        if is_session_message:
+            session = data.get("betting_sessions", {}).get(session_id_for_msg, {})
+            contestant_name = session.get("contestants", {}).get(contestant_id)
+        else:
+            contestant_name = data["betting"].get("contestants", {}).get(contestant_id)
         self._log_reaction_debug(
             f"🔍 REACTION ADD: contestant_id={contestant_id} -> contestant_name={contestant_name}"
         )
@@ -2906,12 +2917,19 @@ class Betting(commands.Cog):
                 "bet_amount": bet_amount,
                 "emoji": emoji_str,
                 "channel": channel,
+                "session_id": session_id_for_msg,
                 "sequence": current_sequence,
                 "timestamp": current_timestamp,
             }
+
+            # If a session message, persist a fast mapping for contestant -> session
+            # so later resolution (e.g., in _process_bet) can find the session.
+            if session_id_for_msg and contestant_name:
+                data.setdefault("contestant_to_session", {})[contestant_name.lower()] = session_id_for_msg
+                save_data(data)
+
             self._log_reaction_debug(
-                f"🔍 REACTION ADD: Stored pending bet: {contestant_name} for {bet_amount} coins, emoji {emoji_str} (sequence: {current_sequence}, timestamp: {
-                    current_timestamp:.3f})"
+                f"🔍 REACTION ADD: Stored pending bet: {contestant_name} for {bet_amount} coins, emoji {emoji_str} (sequence: {current_sequence}, timestamp: {current_timestamp:.3f})"
             )
         else:
             # Don't restart timers if we're ignoring this reaction
@@ -2968,7 +2986,7 @@ class Betting(commands.Cog):
         main_msg_id, main_chan_id = get_live_message_info(data)
         secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
 
-        # Check if the reaction is on one of the live betting messages
+        # Check if the reaction is on one of the live betting messages or a session message
         is_main_message = (
             payload.message_id == main_msg_id and payload.channel_id == main_chan_id
         )
@@ -2977,7 +2995,14 @@ class Betting(commands.Cog):
             and payload.channel_id == secondary_chan_id
         )
 
-        if not (is_main_message or is_secondary_message):
+        # Detect session-specific live message
+        session_id_for_msg = None
+        for sid, sess in data.get("betting_sessions", {}).items():
+            if sess.get("live_message_id") == payload.message_id and sess.get("channel_id") == payload.channel_id:
+                session_id_for_msg = sid
+                break
+
+        if not (is_main_message or is_secondary_message or session_id_for_msg):
             return  # Not a reaction on a live betting message
 
         # Get user object
@@ -2996,14 +3021,32 @@ class Betting(commands.Cog):
             return  # Not a betting emoji
 
         user_id_str = str(user.id)
+
+        # If this is a session-specific message, operate on that session's bets
+        if session_id_for_msg:
+            session = data.get("betting_sessions", {}).get(session_id_for_msg, {})
+            session_bets = session.get("bets", {})
+            contestant_name = session.get("contestants", {}).get(contestant_id)
+            if user_id_str in session_bets:
+                bet_info = session_bets[user_id_str]
+                if contestant_name and bet_info.get("choice") == contestant_name.lower():
+                    refund_amount = bet_info.get("amount", 0)
+                    data["balances"][user_id_str] = data["balances"].get(user_id_str, 0) + refund_amount
+                    # Use remove_bet accessor to keep storage access centralized
+                    from data_manager import remove_bet
+
+                    remove_bet(data, session_id_for_msg, user_id_str)
+                    schedule_live_message_update_for_session(session_id_for_msg)
+                    return
+
+        # Fallback to legacy bets
+        contestant_name = data["betting"]["contestants"].get(contestant_id)
         if user_id_str in data["betting"]["bets"]:
             bet_info = data["betting"]["bets"][user_id_str]
-            contestant_name = data["betting"]["contestants"].get(contestant_id)
-
-            if contestant_name and bet_info["choice"] == contestant_name.lower():
+            if contestant_name and bet_info.get("choice") == contestant_name.lower():
                 # When removing a bet, just process the refund and cleanup
-                refund_amount = bet_info["amount"]
-                data["balances"][user_id_str] += refund_amount
+                refund_amount = bet_info.get("amount", 0)
+                data["balances"][user_id_str] = data["balances"].get(user_id_str, 0) + refund_amount
                 del data["betting"]["bets"][user_id_str]
                 save_data(data)
                 schedule_live_message_update()  # Schedule batched update
