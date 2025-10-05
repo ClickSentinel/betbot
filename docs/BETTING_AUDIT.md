@@ -142,6 +142,17 @@ If you want me to proceed I will implement step 1 and step 2 now and run the tes
   - Final test run after these edits: `pytest` => 166 passed, 0 failed.
   - Committed changes on branch `dev` with message: "bet: add accessor helpers, refactor _process_bet to use session-aware storage, add tests and update audit doc" (and additional doc updates committed in a follow-up commit).
 
+  - SessionBetState and code-wide replacement (2025-10-05):
+    - Implemented `SessionBetState` in `betbot/utils/bet_state.py`. It mirrors the `BetState` public API but operates on a session dict (the shape used in `data["betting_sessions"][session_id]`). It reuses the existing `Economy` logic, result calculation, and persistence (`save_data`).
+    - Replaced session-aware uses of `BetState` with `SessionBetState` in `betbot/cogs/betting.py`:
+      - Winner declaration path (`_process_winner_declaration`) now resolves a session for the provided contestant name and uses `SessionBetState` to calculate results and declare the winner for that session. Legacy single-session winner processing is preserved unchanged.
+      - Session-specific bet placement flows (where a `session_id` is available) now use the accessor layer or `SessionBetState` as appropriate so refunds and balance validation use the same economy logic as legacy flows.
+    - Ran the full test-suite after these edits: `pytest` => 165 passed, 1 skipped, 2 warnings. All tests pass.
+
+    - Lint notes: a few type hint mismatches were addressed via casting where session dicts are dynamically typed; this maintains runtime compatibility while keeping the static checks reasonable.
+
+    - Commit summary: implemented session wrapper and updated win/declare flows to be session-aware. Remaining call-sites of `BetState` that are intentionally legacy (e.g., top-level `self.bet_state`) were left to preserve single-session compatibility.
+
 ## Small follow-ups performed / validation
 
 - Verified `utils/live_message.py` already supports `session_id` in `update_live_message` and normalizes contestant keys for the message formatter (no changes required there for now).
