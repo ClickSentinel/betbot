@@ -26,6 +26,8 @@ if [ ! -z "$SENSITIVE_FILES" ]; then
 fi
 
 # Check for potential hardcoded tokens in Python files
+# The threshold of 50 characters is used because most API tokens and secrets are at least 50 characters long.
+# This helps reduce false positives while still catching most real tokens.
 POTENTIAL_TOKENS=$(git diff --cached | grep -E "^\+.*TOKEN.*=.*['\"][A-Za-z0-9]{50,}")
 
 if [ ! -z "$POTENTIAL_TOKENS" ]; then
