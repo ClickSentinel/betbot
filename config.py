@@ -15,6 +15,16 @@ ENABLE_BET_TIMER_DEFAULT = False
 BET_TIMER_DURATION = 90
 BET_TIMER_UPDATE_INTERVAL = 5
 
+# ---------- Reaction Debug Logging (safe defaults) ----------
+# Toggle REACTION_DEBUG_LOGGING_ENABLED in this file and restart the bot to
+# enable/disable detailed reaction debug logging without exposing your
+# filesystem via bot messages.
+REACTION_DEBUG_LOGGING_ENABLED = False
+# If True, administrators can toggle reaction debug logging at runtime
+# using the bot command. Leave False to require editing this file + restart.
+ALLOW_RUNTIME_REACTION_DEBUG_TOGGLE = False
+REACTION_DEBUG_LOG_FILENAME = "reaction_debug.log"
+
 # ---------- Emojis ----------
 SEPARATOR_EMOJI = "➖"
 

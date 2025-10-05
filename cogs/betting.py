@@ -51,6 +51,10 @@ from config import (
     MSG_PLACE_MANUAL_BET_INSTRUCTIONS,
     MSG_INVALID_OPENBET_FORMAT,
     MSG_BET_LOCKED_WITH_LIVE_LINK,
+    # reaction debug config
+    REACTION_DEBUG_LOGGING_ENABLED,
+    ALLOW_RUNTIME_REACTION_DEBUG_TOGGLE,
+    REACTION_DEBUG_LOG_FILENAME,
 )
 from data_manager import load_data, save_data, ensure_user, Data, MultiBettingSession, TimerConfig
 from utils.live_message import (
@@ -87,9 +91,10 @@ class Betting(commands.Cog):
         # Setup reaction debug logging
         import os
 
-        self.reaction_log_file = os.path.join(
-            os.path.dirname(__file__), "..", "logs", "reaction_debug.log"
-        )
+        # Build a safe path for the reaction debug file under the package logs dir
+        # We will never expose the absolute path in messages sent to Discord.
+        logs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "logs"))
+        self.reaction_log_file = os.path.join(logs_dir, REACTION_DEBUG_LOG_FILENAME)
         # Create logs directory if it doesn't exist
         os.makedirs(os.path.dirname(self.reaction_log_file), exist_ok=True)
 
@@ -113,8 +118,10 @@ class Betting(commands.Cog):
         # Track last enforcement time per user to prevent spam
         self._last_enforcement: Dict[int, float] = {}  # user_id -> timestamp
 
-        # Toggle for extensive reaction debug logging (set to False to reduce log noise)
-        self.enable_reaction_debug_logging: bool = False
+        # Toggle for extensive reaction debug logging. Default comes from config.
+        # If runtime toggling is disabled via config, the command will not allow
+        # changing this value.
+        self.enable_reaction_debug_logging = bool(REACTION_DEBUG_LOGGING_ENABLED)
 
     def _log_reaction_debug(self, message: str) -> None:
         """Log reaction debug messages to both console and file."""
@@ -2284,14 +2291,26 @@ class Betting(commands.Cog):
     @commands.has_permissions(manage_guild=True)
     async def toggle_reaction_debug(self, ctx: commands.Context) -> None:
         """Toggle extensive reaction debug logging on/off."""
+        # Respect configuration: if runtime toggling is disabled, require editing config.py
+        if not ALLOW_RUNTIME_REACTION_DEBUG_TOGGLE:
+            description = (
+                "Runtime toggling of reaction debug logging is disabled in configuration.\n"
+                "To change this, edit `betbot/config.py` and set `REACTION_DEBUG_LOGGING_ENABLED`\n"
+                "and/or `ALLOW_RUNTIME_REACTION_DEBUG_TOGGLE`, then restart the bot.\n\n"
+                f"Debug log filename: `{REACTION_DEBUG_LOG_FILENAME}`"
+            )
+            await self._send_embed(
+                ctx,
+                "🔧 Reaction Debug Logging",
+                description,
+                COLOR_WARNING,
+            )
+            return
+
+        # Toggle at runtime
         self.enable_reaction_debug_logging = not self.enable_reaction_debug_logging
-        
         status = "**enabled**" if self.enable_reaction_debug_logging else "**disabled**"
-        description = f"Extensive reaction debug logging is now {status}."
-        
-        if self.enable_reaction_debug_logging:
-            description += f"\n\nDebug logs will be written to: `{self.reaction_log_file}`"
-        
+        description = f"Extensive reaction debug logging is now {status}.\n\nDebug log filename: `{REACTION_DEBUG_LOG_FILENAME}`"
         await self._send_embed(
             ctx,
             "🔧 Reaction Debug Logging Toggled",
@@ -2340,9 +2359,57 @@ class Betting(commands.Cog):
             return
 
         # Quick check: if betting is not open, don't process any reaction additions
+        # However, if the reaction is on the live betting messages, remove it
+        # so users don't get stuck with reaction indicators. This is a best-effort
+        # removal and will silently ignore any errors.
         data = load_data()
         if not data["betting"]["open"]:
-            return  # Betting is closed, no need to process reactions
+            main_msg_id, main_chan_id = get_live_message_info(data)
+            secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
+
+            is_live_msg = (
+                payload.message_id == main_msg_id and payload.channel_id == main_chan_id
+            ) or (
+                payload.message_id == secondary_msg_id and payload.channel_id == secondary_chan_id
+            )
+
+            if not is_live_msg:
+                return  # Not a live betting message, nothing to do
+
+            # Best-effort: try to fetch channel/message/user and remove reaction
+            try:
+                import inspect
+
+                channel = self.bot.get_channel(payload.channel_id)
+                if channel is None:
+                    # Nothing we can do
+                    return
+
+                # Use getattr to avoid static attribute-access assumptions
+                fetch_message = getattr(channel, "fetch_message", None)
+                if not callable(fetch_message):
+                    # Channel type doesn't support fetching messages
+                    return
+
+                # Some tests/mocks return async mocks for channels - call the method dynamically
+                fetch_result = fetch_message(payload.message_id)
+                if inspect.isawaitable(fetch_result):
+                    message = await fetch_result
+                else:
+                    message = fetch_result
+
+                user = await self.bot.fetch_user(payload.user_id)
+
+                # Remove reaction if the message exposes that method
+                remove_reaction = getattr(message, "remove_reaction", None)
+                if callable(remove_reaction):
+                    remove_result = remove_reaction(payload.emoji, user)
+                    if inspect.isawaitable(remove_result):
+                        await remove_result
+            except Exception:
+                # Ignore any errors (e.g., channel/message not found, permissions)
+                pass
+            return
 
         self._log_reaction_debug(
             f"🔍 REACTION ADD: user_id={
