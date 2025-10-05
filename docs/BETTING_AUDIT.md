@@ -134,6 +134,14 @@ If you want me to proceed I will implement step 1 and step 2 now and run the tes
 
 - Ran the full test suite after changes: `pytest` => 164 passed, 0 failed.
 
+- Additional work (2025-10-05):
+  - Updated reaction handlers in `betbot/cogs/betting.py` (`on_raw_reaction_add` and `on_raw_reaction_remove`) to be session-aware:
+    - Reactions on session-specific live messages now resolve the `session_id` and store pending reaction entries with `session_id`.
+    - Removal/add flows for reaction-based bets use the accessor API (`set_bet`/`remove_bet`) so reaction bets and manual `!bet` commands converge on the same canonical storage.
+  - Added tests to cover accessor behavior and session `_process_bet` flows; iteratively fixed a fixture issue and re-ran the test suite until green.
+  - Final test run after these edits: `pytest` => 166 passed, 0 failed.
+  - Committed changes on branch `dev` with message: "bet: add accessor helpers, refactor _process_bet to use session-aware storage, add tests and update audit doc" (and additional doc updates committed in a follow-up commit).
+
 ## Small follow-ups performed / validation
 
 - Verified `utils/live_message.py` already supports `session_id` in `update_live_message` and normalizes contestant keys for the message formatter (no changes required there for now).

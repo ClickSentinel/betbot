@@ -192,3 +192,10 @@ This major update transforms BetBot from a good Discord betting bot into a produ
 - **Clean Execution Environment**: Achieved 134/134 passing tests (100% success rate)
 
 This update represents a fundamental improvement in BetBot's reliability, user experience, and maintainability, establishing it as a production-ready Discord bot with enterprise-quality testing, comprehensive error handling, and bulletproof reaction processing.
+
+## 🔁 Patch (2025-10-05)
+
+- Small audit and consistency fixes:
+  - Added accessor helpers and consolidated multi-session betting writes so reaction-based and manual bets use the same canonical storage.
+  - Updated reaction handlers to be session-aware and added tests validating the accessor behavior and session write flows.
+  - Committed changes on `dev` branch: "bet: add accessor helpers, refactor _process_bet to use session-aware storage, add tests and update audit doc".
