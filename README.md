@@ -36,9 +36,11 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 
 3. **Configure Environment**
    ```bash
-   # Create .env file
+   # Create .env file (⚠️ NEVER commit this file to git!)
    echo "DISCORD_TOKEN=YOUR_BOT_TOKEN_HERE" > .env
    ```
+   
+   > 🔒 **Security Note:** Keep your bot token secure! Never commit `.env` to git or share your token publicly. See [SECURITY.md](SECURITY.md) for details.
 
 4. **Install & Run**
    ```bash
@@ -200,6 +202,7 @@ betbot/
 
 ### Core Documentation
 - **README.md** (this file) - Main project overview and quick start guide
+- **SECURITY.md** - Security best practices and guidelines
 - **docs/DEPLOYMENT.md** - Production deployment guide with testing procedures
 - **docs/CHANGELOG_v2.1.md** - Comprehensive changelog for version 2.1 improvements
 
@@ -219,14 +222,38 @@ betbot/
 - **For Users**: Start with this README, then docs/QUICK_REFERENCE.md
 - **For Developers**: Check .github/copilot-instructions.md and docs/CHANGELOG_v2.1.md  
 - **For Deployment**: Use docs/DEPLOYMENT.md for production setup
+- **For Security**: Read SECURITY.md for best practices
+
+## 🔒 Security
+
+**Your bot token is sensitive!** Follow these guidelines:
+
+- ✅ **DO**: Store token in `.env` file (automatically ignored by git)
+- ✅ **DO**: Use environment variables for all secrets
+- ❌ **DON'T**: Commit `.env`, tokens, or sensitive data to git
+- ❌ **DON'T**: Share your bot token publicly or in screenshots
+
+See [SECURITY.md](SECURITY.md) for comprehensive security guidelines, including:
+- Token security best practices
+- Pre-commit hooks for preventing leaks
+- File permissions and access control
+- What to do if your token is compromised
 
 ## 🤝 Contributing
 
 1. Fork the repository
 2. Create feature branch: `git checkout -b feature/new-feature`
 3. Install dependencies: `pip install -r requirements.txt`
-4. Run tests: `python -m pytest`
-5. Submit pull request
+4. **Run security audit**: `python scripts/security_audit.py` (must pass all checks)
+5. Run tests: `python -m pytest`
+6. Ensure no sensitive data in commits (use pre-commit hook)
+7. Submit pull request
+
+**Security Requirements:**
+- No hardcoded tokens or secrets
+- Use environment variables for all sensitive data
+- Verify `.env` and `data.json` are not committed
+- Review `git diff` before committing
 
 ---
 

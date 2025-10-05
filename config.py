@@ -15,6 +15,16 @@ ENABLE_BET_TIMER_DEFAULT = False
 BET_TIMER_DURATION = 90
 BET_TIMER_UPDATE_INTERVAL = 5
 
+# ---------- Reaction Debug Logging (safe defaults) ----------
+# Toggle REACTION_DEBUG_LOGGING_ENABLED in this file and restart the bot to
+# enable/disable detailed reaction debug logging without exposing your
+# filesystem via bot messages.
+REACTION_DEBUG_LOGGING_ENABLED = False
+# If True, administrators can toggle reaction debug logging at runtime
+# using the bot command. Leave False to require editing this file + restart.
+ALLOW_RUNTIME_REACTION_DEBUG_TOGGLE = False
+REACTION_DEBUG_LOG_FILENAME = "reaction_debug.log"
+
 # ---------- Emojis ----------
 SEPARATOR_EMOJI = "➖"
 
@@ -54,6 +64,11 @@ COLOR_ERROR = discord.Color(0xE74C3C)  # Red
 COLOR_GOLD = discord.Color(0xFFD700)  # Gold
 COLOR_DARK_ORANGE = discord.Color(0xFF8C00)  # Dark Orange
 COLOR_DARK_GRAY = discord.Color(0x607D8B)  # Dark Gray
+
+# How long to suppress the batched live-message updater after an immediate
+# special update (seconds). Keep this small but greater than the scheduler
+# batch window (default 6s).
+LIVE_MESSAGE_SUPPRESSION_SECONDS = 6.0
 COLOR_WARNING = discord.Color(0xF1C40F)  # Yellow
 COLOR_ERROR = discord.Color(0xE74C3C)  # Red
 COLOR_GOLD = discord.Color(0xFFD700)  # Gold

@@ -21,6 +21,10 @@ class LiveMessageScheduler:
     def __init__(self):
         # Set of data file paths needing updates
         self.pending_updates: Set[str] = set()
+        # Skip batched update until this timestamp (epoch seconds). Used to
+        # avoid overwriting immediate special embeds (winner/locked) with a
+        # subsequent batched update.
+        self.skip_until: float = 0.0
         self.update_task: Optional[asyncio.Task] = None
         self.bot: Optional[discord.Client] = None
         self.is_running = False
@@ -35,6 +39,9 @@ class LiveMessageScheduler:
             return
 
         self.pending_updates.add(data_identifier)
+        # No additional params are stored for batched updates. If callers need
+        # to prevent the batched update from overwriting a special immediate
+        # update, they should call `suppress_next_batched_update`.
 
         # Start the update loop if not already running
         if not self.is_running:
@@ -59,7 +66,18 @@ class LiveMessageScheduler:
 
                     data = load_data()
 
-                    # Update live message with current state
+                    # If a recent immediate special update (winner/close) was
+                    # performed, skip calling update_live_message here so we do
+                    # not overwrite the special embed. Clear pending updates
+                    # and continue.
+                    import time as _time
+
+                    if _time.time() < self.skip_until:
+                        # Clear any pending markers and continue to next loop
+                        self.pending_updates.difference_update(updates_to_process)
+                        continue
+
+                    # Update live message with the current state
                     await update_live_message(self.bot, data)
 
         except asyncio.CancelledError:
@@ -112,31 +130,34 @@ def create_winner_info(
         choice: str
         emoji: Optional[str]
 
-    data: Data = {
-        "betting": {
-            "bets": {
-                user_id: {
-                    "amount": abs(winnings) if winnings <= 0 else winnings // 2,
-                    "choice": winner_name.lower() if winnings > 0 else "other",
-                    "emoji": None,
-                }
-                for user_id, winnings in winnings_info.items()
+    data = cast(
+        Data,
+        {
+            "betting": {
+                "bets": {
+                    user_id: {
+                        "amount": abs(winnings) if winnings <= 0 else winnings // 2,
+                        "choice": winner_name.lower() if winnings > 0 else "other",
+                        "emoji": None,
+                    }
+                    for user_id, winnings in winnings_info.items()
+                },
+                "open": False,
+                "locked": True,
+                "contestants": {},
             },
-            "open": False,
-            "locked": True,
-            "contestants": {},
+            "balances": {},
+            "settings": {},
+            "reaction_bet_amounts": {},
+            "contestant_1_emojis": [],
+            "contestant_2_emojis": [],
+            "live_message": None,
+            "live_channel": None,
+            "live_secondary_message": None,
+            "live_secondary_channel": None,
+            "timer_end_time": None,
         },
-        "balances": {},
-        "settings": {},
-        "reaction_bet_amounts": {},
-        "contestant_1_emojis": [],
-        "contestant_2_emojis": [],
-        "live_message": None,
-        "live_channel": None,
-        "live_secondary_message": None,
-        "live_secondary_channel": None,
-        "timer_end_time": None,
-    }
+    )
 
     # Use the centralized calculation
     bet_state = BetState(data)
@@ -352,8 +373,28 @@ async def update_live_message(
 
 
 def schedule_live_message_update() -> None:
-    """Schedule a batched live message update. Multiple calls within 5 seconds are batched together."""
+    """Schedule a batched live message update. Multiple calls within 5 seconds are batched together.
+    This is a lightweight trigger for the global scheduler. Use
+    `suppress_next_batched_update` if you need to prevent the batched
+    update from overwriting a recent immediate special update.
+    """
     live_message_scheduler.schedule_update()
+
+
+def suppress_next_batched_update(seconds: float = 6.0) -> None:
+    """Prevent the next batched update from running for `seconds` seconds.
+
+    This is used to avoid the batched update overwriting a special immediate
+    update (for example, winner or locked embeds) that was just posted.
+    """
+    import time
+    from config import LIVE_MESSAGE_SUPPRESSION_SECONDS
+
+    # If caller didn't provide a value, use the configured default
+    if seconds is None:
+        seconds = LIVE_MESSAGE_SUPPRESSION_SECONDS
+
+    live_message_scheduler.skip_until = time.time() + seconds
 
 
 def initialize_live_message_scheduler(bot: discord.Client) -> None:

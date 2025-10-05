@@ -110,12 +110,12 @@ class Economy:
         """Process bet results and update balances accordingly."""
         user_results = results["user_results"]
 
-        # For winners, add their winnings (bet was already deducted)
+        # Update balances - for winners, add their total winnings (includes bet + profit)
+        # For losers, winnings is 0 so balance stays as is (bet was already deducted)
         for user_id, result in user_results.items():
             current_balance = self.get_balance(user_id)
-            new_balance = current_balance + (
-                result["winnings"] if result["winnings"] > 0 else 0
-            )
+            # result["winnings"] already includes the original bet amount for winners
+            new_balance = current_balance + result["winnings"]
             self.set_balance(user_id, new_balance)
 
         # Save changes
@@ -153,6 +153,11 @@ class BetState:
     """Encapsulates all betting state management."""
 
     def __init__(self, data: Data):
+        self.data = data
+        self.economy = Economy(data)
+
+    def update_data(self, data: Data) -> None:
+        """Update the BetState with fresh data."""
         self.data = data
         self.economy = Economy(data)
 

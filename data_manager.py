@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, Any, TypedDict, Optional, List  # Added List for clarity
+from typing import Dict, Any, TypedDict, Optional, List, Tuple  # Added List for clarity
 from config import (
     DATA_FILE,
     STARTING_BALANCE,
@@ -29,9 +29,61 @@ class BettingSession(TypedDict):
     contestants: Dict[str, str]
 
 
+# Multi-session support (Phase 1 - Data Structure)
+class SessionStatus:
+    OPEN = "open"
+    LOCKED = "locked"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+
+
+class TimerConfig(TypedDict):
+    enabled: bool  # Whether timer is active
+    duration: int  # Timer duration in seconds
+    lock_duration: Optional[int]  # Seconds until auto-lock
+    close_duration: Optional[int]  # Seconds until auto-close
+    update_interval: int  # Live message update frequency
+    auto_lock_at: Optional[float]  # Specific timestamp to lock
+    auto_close_at: Optional[float]  # Specific timestamp to close
+
+
+class MultiBettingSession(TypedDict):
+    # Identity
+    id: str  # Format: "{timestamp}_{random}"
+    title: str  # User-friendly display name
+
+    # Metadata
+    created_at: float  # Unix timestamp
+    creator_id: int  # Discord user ID
+    channel_id: int  # Origin channel ID
+
+    # Timing
+    timer_config: TimerConfig  # Timing configuration
+    lock_time: Optional[float]  # When session will/did lock
+    close_time: Optional[float]  # When session will/did close
+
+    # State
+    status: str  # Current session status (use SessionStatus constants)
+    contestants: Dict[str, str]  # contestant_key -> display_name
+    bets: Dict[str, UserBet]  # user_id -> bet_info
+
+    # Live messaging
+    live_message_id: Optional[int]  # Dedicated live message
+    last_update: float  # Last live message update
+
+    # Analytics (cached for performance)
+    total_pot: int  # Cached total pot value
+    total_bettors: int  # Cached bettor count
+    winner: Optional[str]  # Winner if completed
+
+    # Closure metadata
+    closed_at: Optional[float]  # Unix timestamp when closed
+    closed_by: Optional[str]  # User ID who closed the session
+
+
 class Data(TypedDict):
     balances: Dict[str, int]
-    betting: BettingSession
+    betting: BettingSession  # Legacy single session (backwards compatibility)
     settings: Dict[str, Any]
     reaction_bet_amounts: Dict[str, int]
     contestant_1_emojis: List[str]
@@ -40,8 +92,15 @@ class Data(TypedDict):
     live_channel: Optional[int]
     live_secondary_message: Optional[int]
     live_secondary_channel: Optional[int]
-    # New: Add timer_end_time to track when the betting timer will expire
-    timer_end_time: Optional[float]
+    timer_end_time: Optional[float]  # Legacy timer
+
+    # Multi-session support (Phase 1 - New fields)
+    betting_sessions: Dict[str, MultiBettingSession]  # session_id -> session_data
+    active_sessions: List[str]  # List of non-completed session IDs
+    contestant_to_session: Dict[
+        str, str
+    ]  # contestant_name -> session_id (for auto-detection)
+    multi_session_mode: bool  # Enable multi-session features
 
 
 # ---------- Data I/O ----------
@@ -62,6 +121,11 @@ def load_data() -> Data:
             LIVE_SECONDARY_KEY: None,  # Use the constant as key
             LIVE_SECONDARY_CHANNEL_KEY: None,  # Use the constant as key
             "timer_end_time": None,  # Initialize new key
+            # Multi-session support (Phase 1 - Initialize new fields)
+            "betting_sessions": {},  # No sessions initially
+            "active_sessions": [],  # No active sessions initially
+            "contestant_to_session": {},  # No contestant mapping initially
+            "multi_session_mode": False,  # Start in legacy single-session mode
         }
         save_data(initial_data)
         return initial_data
@@ -127,6 +191,22 @@ def load_data() -> Data:
         modified = True
     data.setdefault("timer_end_time", None)  # Ensure timer_end_time is present
 
+    # Phase 1: Ensure multi-session fields are initialized
+    if "betting_sessions" not in data:
+        data["betting_sessions"] = {}
+        modified = True
+    if "active_sessions" not in data:
+        data["active_sessions"] = []
+        modified = True
+    if "contestant_to_session" not in data:
+        data["contestant_to_session"] = {}
+        modified = True
+    if "multi_session_mode" not in data:
+        data["multi_session_mode"] = (
+            False  # Start in legacy mode for existing installations
+        )
+        modified = True
+
     # Ensure user balances are initialized if missing
     if "balances" not in data:
         data["balances"] = {}
@@ -154,3 +234,81 @@ def save_data(data: Data):
 def ensure_user(data: Data, user_id: str):
     if user_id not in data["balances"]:
         data["balances"][user_id] = STARTING_BALANCE
+
+
+# ---------- Multi-Session Support Functions (Phase 1) ----------
+
+
+def is_multi_session_mode(data: Data) -> bool:
+    """Check if multi-session mode is enabled."""
+    return data.get("multi_session_mode", False)
+
+
+def get_active_sessions(data: Data) -> Dict[str, MultiBettingSession]:
+    """Get all active betting sessions."""
+    sessions = {}
+    for session_id in data.get("active_sessions", []):
+        if session_id in data.get("betting_sessions", {}):
+            sessions[session_id] = data["betting_sessions"][session_id]
+    return sessions
+
+
+def find_session_by_contestant(
+    contestant_name: str, data: Data
+) -> Optional[Tuple[str, str, str]]:
+    """Find session containing the specified contestant.
+
+    Returns:
+        Tuple of (session_id, contestant_key, contestant_display_name) if found, None otherwise
+    """
+
+    # Direct mapping lookup (fastest)
+    contestant_mapping = data.get("contestant_to_session", {})
+    lower_name = contestant_name.lower()
+    if lower_name in contestant_mapping:
+        session_id = contestant_mapping[lower_name]
+        # Verify session is still active
+        if session_id in data.get("active_sessions", []):
+            session = data.get("betting_sessions", {}).get(session_id)
+            if session and session.get("contestants"):
+                # Find the contestant key and display name
+                for contestant_key, contestant_display in session[
+                    "contestants"
+                ].items():
+                    if contestant_display.lower() == lower_name:
+                        return (session_id, contestant_key, contestant_display)
+
+    # Fallback: Search through all active sessions (case-insensitive, partial match)
+    for session_id in data.get("active_sessions", []):
+        session = data.get("betting_sessions", {}).get(session_id)
+        if not session or not session.get("contestants"):
+            continue
+
+        # Check all contestants in session
+        for contestant_key, contestant_display in session["contestants"].items():
+            if _is_contestant_match(contestant_name, contestant_display):
+                # Update mapping for future lookups
+                data["contestant_to_session"][contestant_display.lower()] = session_id
+                return (session_id, contestant_key, contestant_display)
+
+    return None
+
+
+def _is_contestant_match(input_name: str, contestant_name: str) -> bool:
+    """Check if input matches contestant name (case-insensitive, partial match)."""
+    input_lower = input_name.lower().strip()
+    contestant_lower = contestant_name.lower().strip()
+
+    # Exact match
+    if input_lower == contestant_lower:
+        return True
+
+    # Partial match (input is substring of contestant name)
+    if len(input_lower) >= 3 and input_lower in contestant_lower:
+        return True
+
+    # Handle common abbreviations (first 3+ characters)
+    if len(input_lower) >= 3 and contestant_lower.startswith(input_lower):
+        return True
+
+    return False

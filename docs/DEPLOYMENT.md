@@ -179,6 +179,17 @@ sudo systemctl start betbot
 ### Essential Feature Verification
 After deployment, verify these critical improvements:
 
+**0. Security Audit (NEW):**
+```bash
+# Run security audit to ensure no sensitive data is exposed
+python scripts/security_audit.py
+# Expected: All 8/8 checks should pass ✅
+
+# Verify no .env or data.json in git
+git ls-files | grep -E "\.env$|data\.json$"
+# Expected: No output (files not tracked)
+```
+
 **1. Enhanced Timer System:**
 ```bash
 # In Discord: !openbet Alice Bob
@@ -311,11 +322,42 @@ LOG_LEVEL=WARNING
 
 ## Security Considerations
 
+🔒 **Critical Security Requirements:**
+
 1. **Keep bot token secure** - never commit to git
-2. **Regular updates** - keep dependencies updated
+   - Store in `.env` file (automatically ignored)
+   - Use environment variables only
+   - Regenerate if compromised
+   
+2. **Run security audit** - before deploying
+   ```bash
+   python scripts/security_audit.py
+   ```
+   All checks should pass ✅
+   
 3. **File permissions** - restrict data directory access
-4. **Network security** - use firewall rules if needed
+   ```bash
+   chmod 700 data/
+   chmod 600 data.json .env
+   ```
+   
+4. **Regular updates** - keep dependencies updated
+   ```bash
+   pip install -r requirements.txt --upgrade
+   ```
+   
 5. **Monitor logs** - watch for unusual activity
+   - Logs are in `logs/betbot.log`
+   - Auto-rotate at 10MB (keeps 5 backups)
+   - Review regularly for security issues
+
+6. **Use pre-commit hooks** (optional but recommended)
+   ```bash
+   cp pre-commit.example .git/hooks/pre-commit
+   chmod +x .git/hooks/pre-commit
+   ```
+
+See [SECURITY.md](../SECURITY.md) for comprehensive security guidelines.
 
 ## Scaling
 
