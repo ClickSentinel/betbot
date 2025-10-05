@@ -19,7 +19,7 @@ class LiveMessageScheduler:
     """Batches live message updates on a 5-second schedule to reduce API calls."""
 
     def __init__(self):
-        # Set of data file paths needing updates
+        # Set of session ids (or 'default') needing updates
         self.pending_updates: Set[str] = set()
         # Skip batched update until this timestamp (epoch seconds). Used to
         # avoid overwriting immediate special embeds (winner/locked) with a
@@ -61,7 +61,7 @@ class LiveMessageScheduler:
                     updates_to_process = self.pending_updates.copy()
                     self.pending_updates.clear()
 
-                    # Load current data and update all pending messages
+                    # Load current data once
                     from data_manager import load_data
 
                     data = load_data()
@@ -77,8 +77,21 @@ class LiveMessageScheduler:
                         self.pending_updates.difference_update(updates_to_process)
                         continue
 
-                    # Update live message with the current state
-                    await update_live_message(self.bot, data)
+                    # If exactly one specific session is pending, update only
+                    # that session. Otherwise (multiple sessions or the legacy
+                    # default), perform a single global update to preserve the
+                    # previous batching behavior and reduce API calls.
+                    if len(updates_to_process) == 1 and next(iter(updates_to_process)) != "default":
+                        identifier = next(iter(updates_to_process))
+                        try:
+                            await update_live_message(self.bot, data, session_id=identifier)
+                        except Exception as e:
+                            print(f"Error updating live message for {identifier}: {e}")
+                    else:
+                        try:
+                            await update_live_message(self.bot, data)
+                        except Exception as e:
+                            print(f"Error updating global live message: {e}")
 
         except asyncio.CancelledError:
             pass
@@ -247,6 +260,27 @@ def get_live_message_link(bot: discord.Client, data: Data, is_active: bool) -> s
     return ""
 
 
+def get_session_live_message_info(data: Data, session_id: str) -> Tuple[Optional[int], Optional[int]]:
+    """Retrieve the live message id and channel id for a given session."""
+    session = data.get("betting_sessions", {}).get(session_id)
+    if not session:
+        return None, None
+    return session.get("live_message_id"), session.get("channel_id")
+
+
+def set_session_live_message_info(data: Data, session_id: str, message_id: Optional[int], channel_id: Optional[int]) -> None:
+    """Set session-specific live message info."""
+    session = data.get("betting_sessions", {}).get(session_id)
+    if not session:
+        return
+    session["live_message_id"] = message_id
+    # channel_id is already stored as session.channel_id when created; only
+    # overwrite if provided
+    if channel_id is not None:
+        session["channel_id"] = channel_id
+    save_data(data)
+
+
 async def _get_message_and_user(
     bot: discord.Client, payload: discord.RawReactionActionEvent
 ) -> Tuple[Optional[discord.Message], Optional[discord.User]]:
@@ -300,8 +334,109 @@ async def update_live_message(
     winner_declared: bool = False,
     winner_info: Optional[WinnerInfo] = None,
     current_time: Optional[float] = None,
+    session_id: Optional[str] = None,
 ) -> None:
-    """Updates the live betting message(s) in Discord."""
+    """Updates the live betting message(s) in Discord.
+
+    If `session_id` is provided, update only that session's dedicated live
+    message (if present). Otherwise, update the legacy global main/secondary
+    live messages.
+    """
+
+    # Helper: update a single message id/channel with an embed
+    async def _edit_message(msg_id: int, chan_id: int, embed: discord.Embed):
+        channel = bot.get_channel(chan_id)
+        if channel and isinstance(channel, discord.TextChannel):
+            try:
+                message = await channel.fetch_message(msg_id)
+                await message.edit(embed=embed)
+                return True
+            except discord.NotFound:
+                return False
+            except discord.HTTPException as e:
+                print(f"Error updating live message {msg_id} in channel {chan_id}: {e}")
+                return False
+
+    # Build the betting_session representation depending on whether this is
+    # session-scoped or the legacy top-level session.
+    if session_id:
+        session = data.get("betting_sessions", {}).get(session_id)
+        if not session:
+            return
+
+        # Determine message and channel IDs from session
+        msg_id = session.get("live_message_id")
+        chan_id = session.get("channel_id")
+
+        # Normalize contestant keys ('c1'/'c2' -> '1'/'2') for MessageFormatter
+        raw_contestants = session.get("contestants", {})
+        normalized_contestants = {}
+        for k, v in raw_contestants.items():
+            if isinstance(k, str) and k.startswith("c") and k[1:].isdigit():
+                normalized_contestants[k[1:]] = v
+            else:
+                normalized_contestants[k] = v
+
+        # Build betting_session compatible dict for MessageFormatter
+        betting_session = cast(BettingSession, {
+            "contestants": normalized_contestants,
+            "bets": session.get("bets", {}),
+            "open": session.get("status") == "open",
+            "locked": session.get("status") == "locked",
+        })
+
+        # User names lookup
+        user_names = {}
+        for user_id in betting_session["bets"].keys():
+            try:
+                user = await bot.fetch_user(int(user_id))
+                user_names[user_id] = user.display_name
+            except discord.NotFound:
+                user_names[user_id] = f"Unknown User ({user_id})"
+            except Exception:
+                user_names[user_id] = f"User ({user_id})"
+
+        # Timer info: if session has a timer_config and an auto close/lock
+        timer_info = None
+        tc = session.get("timer_config")
+        if tc and tc.get("enabled"):
+            auto_close = tc.get("auto_close_at")
+            duration = tc.get("duration")
+            if auto_close and duration:
+                actual_current_time = current_time if current_time is not None else time.time()
+                remaining = int(auto_close - actual_current_time)
+                timer_info = create_timer_info(max(0, remaining), int(duration))
+
+        new_embed = await MessageFormatter.create_live_message_embed(
+            betting_session=betting_session,
+            emoji_config=get_emoji_config(data),
+            reaction_amounts=get_reaction_bet_amounts(data),
+            user_names=user_names,
+            current_time=current_time,
+            timer_info=timer_info,
+            betting_closed=betting_closed,
+            close_summary=close_summary,
+            winner_info=winner_info if winner_declared else None,
+        )
+
+        # Add session id to the embed footer so it's visible in the live
+        # message itself (helps admins reference the session without a
+        # separate confirmation message).
+        try:
+            new_embed.set_footer(text=f"Session ID: {session_id}")
+        except Exception:
+            # If embed modification fails for any reason, continue silently
+            pass
+
+        if msg_id and chan_id:
+            ok = await _edit_message(msg_id, chan_id, new_embed)
+            if not ok:
+                # Clear session live message info if message no longer exists
+                session["live_message_id"] = None
+                save_data(data)
+        return
+
+    # Legacy top-level behavior
     main_msg_id, main_chan_id = get_live_message_info(data)
     secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
 
@@ -315,6 +450,7 @@ async def update_live_message(
         return
 
     betting_session = convert_to_betting_session(data)
+    betting_session = cast(BettingSession, betting_session)
 
     # Get user names for the bets
     user_names = {}
@@ -379,6 +515,13 @@ def schedule_live_message_update() -> None:
     update from overwriting a recent immediate special update.
     """
     live_message_scheduler.schedule_update()
+
+
+def schedule_live_message_update_for_session(session_id: Optional[str] = None) -> None:
+    """Schedule a batched update targeted at a specific session. If
+    session_id is None, schedule a legacy/global update."""
+    identifier = session_id if session_id is not None else "default"
+    live_message_scheduler.schedule_update(identifier)
 
 
 def suppress_next_batched_update(seconds: float = 6.0) -> None:

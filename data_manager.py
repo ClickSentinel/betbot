@@ -312,3 +312,50 @@ def _is_contestant_match(input_name: str, contestant_name: str) -> bool:
         return True
 
     return False
+
+
+# ---------- Betting storage accessors (canonical accessors) ----------
+def get_bets(data: Data, session_id: Optional[str] = None) -> Dict[str, UserBet]:
+    """Return the bets dict for the given session_id (multi-session) or the
+    legacy betting dict when session_id is None or multi-session mode is not
+    used. This returns the live dict reference so callers can read/iterate
+    without copying.
+    """
+    if session_id and data.get("betting_sessions") and session_id in data["betting_sessions"]:
+        return data["betting_sessions"][session_id].get("bets", {})
+
+    # Fallback to legacy single-session bets
+    return data["betting"].get("bets", {})
+
+
+def set_bet(data: Data, session_id: Optional[str], user_id: str, bet_info: UserBet) -> None:
+    """Set or update a bet for a user in the given session (or legacy). Persists
+    changes to disk via save_data.
+    """
+    if session_id and data.get("betting_sessions") and session_id in data["betting_sessions"]:
+        session = data["betting_sessions"][session_id]
+        session.setdefault("bets", {})
+        session["bets"][user_id] = bet_info
+        save_data(data)
+        return
+
+    # Legacy
+    data["betting"].setdefault("bets", {})
+    data["betting"]["bets"][user_id] = bet_info
+    save_data(data)
+
+
+def remove_bet(data: Data, session_id: Optional[str], user_id: str) -> None:
+    """Remove a user's bet from the specified session or legacy storage and
+    persist changes. No error if not present.
+    """
+    if session_id and data.get("betting_sessions") and session_id in data["betting_sessions"]:
+        session = data["betting_sessions"][session_id]
+        if "bets" in session and user_id in session["bets"]:
+            del session["bets"][user_id]
+            save_data(data)
+        return
+
+    if "bets" in data["betting"] and user_id in data["betting"]["bets"]:
+        del data["betting"]["bets"][user_id]
+        save_data(data)

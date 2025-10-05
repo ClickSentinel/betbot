@@ -3,6 +3,7 @@ from discord.ext import commands
 from typing import Optional, Tuple, Dict, Any
 import asyncio
 import time
+import re
 
 # Add enhanced logging
 from utils.logger import logger
@@ -64,6 +65,7 @@ from data_manager import (
     MultiBettingSession,
     TimerConfig,
 )
+from data_manager import UserBet
 from utils.live_message import (
     get_live_message_info,
     get_saved_bet_channel_id,
@@ -810,9 +812,11 @@ class Betting(commands.Cog):
                     f"🔍 PROCESS BET: Failed - session {session_id} is not open (status: {session.get('status')})"
                 )
                 return False
+            # Use centralized accessors for bets to keep storage canonical
+            from data_manager import get_bets, set_bet, remove_bet
 
-            # Check for existing bet in this session
-            existing_bet = session["bets"].get(user_id)
+            session_bets = get_bets(data, session_id)
+            existing_bet = session_bets.get(user_id)
             old_emoji = existing_bet.get("emoji") if existing_bet else None
             old_amount = existing_bet.get("amount", 0) if existing_bet else 0
 
@@ -834,24 +838,21 @@ class Betting(commands.Cog):
             # Update user balance
             data["balances"][user_id] -= required_additional
 
-            # Place bet in the specific session
-            session["bets"][user_id] = {
-                "amount": amount,
-                "choice": contestant_name.lower(),
-                "emoji": emoji,
-            }
+            # Place bet using accessor
+            from typing import cast
+            bet_payload = cast(UserBet, {"amount": amount, "choice": contestant_name.lower(), "emoji": emoji})
+            set_bet(data, session_id, user_id, bet_payload)
 
             # Update contestant mapping
             data["contestant_to_session"][contestant_name.lower()] = session_id
 
-            save_data(data)
             bet_result = True
 
         else:
             # Legacy single-session mode
-            # Check if user has an existing bet with an emoji (reaction bet) and
-            # this is a manual bet
-            existing_bet = data["betting"]["bets"].get(user_id)
+            from data_manager import get_bets, set_bet
+
+            existing_bet = get_bets(data).get(user_id)
             old_emoji = existing_bet.get("emoji") if existing_bet else None
 
             # If placing a manual bet (no emoji) after a reaction bet (has emoji),
@@ -860,7 +861,8 @@ class Betting(commands.Cog):
                 await self._remove_old_reaction_bet(data, user_id, old_emoji)
 
             # Use BetState to handle bet placement which will handle refunds and
-            # balance updates
+            # balance updates. BetState operates on legacy data['betting'] so we
+            # can continue to use it for legacy flow.
             bet_state = BetState(data)
             self._log_reaction_debug(
                 f"🔍 PROCESS BET: Calling bet_state.place_bet({user_id}, {amount}, {contestant_name}, {emoji})"
@@ -1267,19 +1269,34 @@ class Betting(commands.Cog):
 
         await self._send_embed(ctx, embed_title, embed_description, embed_color)
 
-        # Update live message with detailed results
+        # Try to locate the session for this winner (multi-session) and update
+        # the session-specific live message if present. Fall back to legacy
+        # behavior if no session found.
+        from data_manager import find_session_by_contestant
+        from utils.live_message import suppress_next_batched_update, schedule_live_message_update_for_session
+
+        session_tuple = find_session_by_contestant(winner_name, data)
+        session_id_for_update = session_tuple[0] if session_tuple else None
+
+        # Update immediate live message for the session or legacy messages
         await update_live_message(
-            self.bot, data, winner_declared=True, winner_info=winner_info
+            self.bot,
+            data,
+            winner_declared=True,
+            winner_info=winner_info,
+            session_id=session_id_for_update,
         )
 
         # Also schedule batched update for consistency and any pending changes
         # Ensure the batched update doesn't immediately overwrite this
         # special immediate update.
-        from utils.live_message import suppress_next_batched_update
-
         suppress_next_batched_update()
-        # Call the module-level schedule_live_message_update (imported at top)
-        schedule_live_message_update()
+        # Schedule a session-specific batched update if we have a session id
+        if session_id_for_update:
+            schedule_live_message_update_for_session(session_id_for_update)
+        else:
+            # Fall back to global scheduler
+            schedule_live_message_update()
 
     # END _process_winner_declaration
 
@@ -1302,6 +1319,7 @@ class Betting(commands.Cog):
         ctx: commands.Context,
         timer_expired: bool = False,
         silent_lock: bool = False,
+        session_id: Optional[str] = None,
     ) -> None:
         """Internal logic to lock bets, callable by command or timer."""
         data = load_data()
@@ -1326,16 +1344,28 @@ class Betting(commands.Cog):
         if timer_expired:
             lock_summary = MSG_BETTING_TIMER_EXPIRED_SUMMARY
 
-        # Re-added functionality: Clear all reactions from live messages when
-        # bets are locked
-        main_msg_id, main_chan_id = get_live_message_info(data)
-        secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
+        # Re-added functionality: Clear reactions from the relevant live
+        # message(s) when bets are locked. If a session_id is provided, only
+        # clear that session's messages; otherwise fall back to legacy global
+        # messages.
+        from utils.live_message import (
+            get_live_message_info,
+            get_secondary_live_message_info,
+            get_session_live_message_info,
+        )
 
         messages_to_clear_reactions = []
-        if main_msg_id and main_chan_id:
-            messages_to_clear_reactions.append((main_msg_id, main_chan_id))
-        if secondary_msg_id and secondary_chan_id:
-            messages_to_clear_reactions.append((secondary_msg_id, secondary_chan_id))
+        if session_id:
+            sess_msg_id, sess_chan_id = get_session_live_message_info(data, session_id)
+            if sess_msg_id and sess_chan_id:
+                messages_to_clear_reactions.append((sess_msg_id, sess_chan_id))
+        else:
+            main_msg_id, main_chan_id = get_live_message_info(data)
+            secondary_msg_id, secondary_chan_id = get_secondary_live_message_info(data)
+            if main_msg_id and main_chan_id:
+                messages_to_clear_reactions.append((main_msg_id, main_chan_id))
+            if secondary_msg_id and secondary_chan_id:
+                messages_to_clear_reactions.append((secondary_msg_id, secondary_chan_id))
 
         for msg_id, chan_id in messages_to_clear_reactions:
             channel = self.bot.get_channel(chan_id)
@@ -1354,19 +1384,37 @@ class Betting(commands.Cog):
                     print(f"Error clearing reactions from live message {msg_id}: {e}")
         # End re-added functionality
 
+        # Determine session id (if this legacy betting round corresponds to a
+        # created multi-session) and update session-specific live message when
+        # possible.
+        from data_manager import find_session_by_contestant
+        from utils.live_message import suppress_next_batched_update, schedule_live_message_update_for_session
+
+        # Pick first contestant name from legacy betting structure to find session
+        contestants = data["betting"].get("contestants", {})
+        contestant_name = None
+        if contestants:
+            # find any display name
+            for v in contestants.values():
+                contestant_name = v
+                break
+
+        session_tuple = find_session_by_contestant(contestant_name, data) if contestant_name else None
+        session_id_for_update = session_tuple[0] if session_tuple else None
+
         # Update live message immediately to show locked state
         await update_live_message(
-            self.bot, data, betting_closed=True, close_summary=lock_summary
+            self.bot, data, betting_closed=True, close_summary=lock_summary, session_id=session_id_for_update
         )
 
         # Also schedule a batched update to handle any last-moment bets that
         # might be pending. Ensure the batched update doesn't immediately
         # overwrite this special immediate update.
-        from utils.live_message import suppress_next_batched_update
-
         suppress_next_batched_update()
-        # Call the module-level schedule_live_message_update (imported at top)
-        schedule_live_message_update()
+        if session_id_for_update:
+            schedule_live_message_update_for_session(session_id_for_update)
+        else:
+            schedule_live_message_update()
 
         if not silent_lock:  # Only send the locked message if not a silent lock
             await self._send_embed(
@@ -1419,20 +1467,114 @@ class Betting(commands.Cog):
             )
             return
 
-        if data["betting"]["open"]:
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_BET_ALREADY_OPEN, COLOR_ERROR
-            )
-            return
-        if data["betting"]["locked"]:
-            await self._send_embed(
-                ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED, COLOR_ERROR
-            )
+        # If running in multi-session mode, allow opening additional
+        # sessions regardless of legacy `data['betting']` flags. These
+        # legacy flags only control the single-session flow and would
+        # otherwise prevent creating new per-session rounds.
+        from data_manager import is_multi_session_mode
+
+        if not is_multi_session_mode(data):
+            if data["betting"]["open"]:
+                await self._send_embed(
+                    ctx, TITLE_BETTING_ERROR, MSG_BET_ALREADY_OPEN, COLOR_ERROR
+                )
+                return
+            if data["betting"]["locked"]:
+                await self._send_embed(
+                    ctx, TITLE_BETTING_ERROR, MSG_BET_LOCKED, COLOR_ERROR
+                )
             return
 
         clear_live_message_info(data)
         self._cancel_bet_timer()
 
+        # Import here to avoid circular import at module load time
+        from data_manager import is_multi_session_mode
+
+        # Ensure multi-session mode is enabled and create a new session derived
+        # from the two contestant names. This makes `!openbet` the primary
+        # way to open sessions without requiring an explicit session ID.
+        if not is_multi_session_mode(data):
+            data["betting_sessions"] = {}
+            data["active_sessions"] = []
+            data["contestant_to_session"] = {}
+            data["multi_session_mode"] = True
+
+        # Check for contestant name conflicts across existing sessions
+        for existing_session in data.get("betting_sessions", {}).values():
+            for contestant_name in existing_session.get("contestants", {}).values():
+                if contestant_name.lower() in (name1.lower(), name2.lower()):
+                    await self._send_embed(
+                        ctx,
+                        TITLE_BETTING_ERROR,
+                        f"**Contestant '{contestant_name}' already exists in another session.**\nContestant names must be unique across all sessions.",
+                        COLOR_ERROR,
+                    )
+                    return
+
+        # Generate a numeric session ID (1, 2, 3, ...) for implicit sessions.
+        # Store and bump `next_session_id` in the persistent data so IDs are
+        # stable and incrementing across restarts.
+        # Use a simple numeric counter persisted in the data store to produce
+        # human-friendly numeric session ids. Cast to dict to avoid TypedDict
+        # restrictions when adding the field.
+        from typing import MutableMapping, cast
+
+        mutable_data = cast(MutableMapping, data)
+        if "next_session_id" not in mutable_data:
+            mutable_data["next_session_id"] = 1
+
+        # Find the next available numeric id that isn't already used.
+        candidate = str(mutable_data["next_session_id"])
+        while candidate in data.get("betting_sessions", {}):
+            mutable_data["next_session_id"] = int(mutable_data["next_session_id"]) + 1
+            candidate = str(mutable_data["next_session_id"])
+
+        session_id = candidate
+        # Prepare next id for the future
+        mutable_data["next_session_id"] = int(session_id) + 1
+
+        new_session: MultiBettingSession = {
+            "id": session_id,
+            "title": f"{name1} vs {name2}",
+            "status": "open",
+            "contestants": {"c1": name1, "c2": name2},
+            "bets": {},
+            "timer_config": {
+                "enabled": data["settings"].get("enable_bet_timer", True),
+                "duration": BET_TIMER_DURATION,
+                "lock_duration": None,
+                "close_duration": None,
+                "update_interval": 60,
+                "auto_lock_at": None,
+                "auto_close_at": (time.time() + BET_TIMER_DURATION)
+                if data["settings"].get("enable_bet_timer", True)
+                else None,
+            },
+            "created_at": time.time(),
+            "creator_id": ctx.author.id,
+            "channel_id": ctx.channel.id,
+            "lock_time": None,
+            "close_time": None,
+            "live_message_id": None,
+            "last_update": time.time(),
+            "total_pot": 0,
+            "total_bettors": 0,
+            "winner": None,
+            "closed_at": None,
+            "closed_by": None,
+        }
+
+        # Register session in data and update contestant mapping
+        data["betting_sessions"][session_id] = new_session
+        data["active_sessions"].append(session_id)
+        data["contestant_to_session"][name1.lower()] = session_id
+        data["contestant_to_session"][name2.lower()] = session_id
+
+        # For backward compatibility with legacy live-message updater, also
+        # populate the legacy single-session `betting` structure so existing
+        # live-message code continues to function until per-session live
+        # message wiring is implemented.
         data["betting"] = {
             "open": True,
             "locked": False,
@@ -1443,15 +1585,17 @@ class Betting(commands.Cog):
             data["timer_end_time"] = time.time() + BET_TIMER_DURATION
         else:
             data["timer_end_time"] = None
+
         save_data(data)
 
-        # Log betting round opened
+        # Log betting session opened and record metric with session id
         logger.info(
-            f"Betting round opened: {name1} vs {name2} by user {
-                ctx.author}"
+            f"Betting session opened: {session_id} - {name1} vs {name2} by user {ctx.author}"
         )
         performance_monitor.record_metric(
-            "betting.round_opened", 1, {"contestant1": name1, "contestant2": name2}
+            "betting.round_opened",
+            1,
+            {"contestant1": name1, "contestant2": name2, "session_id": session_id},
         )
 
         main_chan_id = get_saved_bet_channel_id(data)
@@ -1495,13 +1639,21 @@ class Betting(commands.Cog):
                     color=COLOR_GOLD,
                 )
             )
-            set_live_message_info(data, main_live_msg.id, target_channel.id)
+                # If multi-session mode is active and we created a session_id above,
+                # store the live message info on the session. Otherwise fall back to
+                # legacy global live message behavior.
+            from data_manager import is_multi_session_mode
+            from utils.live_message import set_session_live_message_info
+
+            if is_multi_session_mode(data) and "session_id" in locals():
+                set_session_live_message_info(data, session_id, main_live_msg.id, target_channel.id)
+            else:
+                set_live_message_info(data, main_live_msg.id, target_channel.id)
 
             # update_live_message will now calculate remaining_time if not
             # passed
-            await update_live_message(
-                self.bot, data
-            )  # Call update_live_message here to populate the embed
+            await update_live_message(self.bot, data, session_id=session_id)
+            # Call update_live_message here to populate the embed
         except Exception as e:
             print(f"Error sending main live message: {e}")
             set_live_message_info(data, None, None)
@@ -1515,10 +1667,14 @@ class Betting(commands.Cog):
             # round opening
             self._add_reactions_background(main_live_msg, data)
 
-        # Only send a secondary message if ctx.channel is a TextChannel and
-        # different from target_channel
+        # Only send a secondary message if no saved bet channel exists and
+        # the invoking channel is different from the target channel. If a
+        # saved bet channel was configured via `!setbetchannel`, prefer that
+        # channel exclusively for live messages and do not post a secondary
+        # duplicate in the invoking channel.
         if (
-            isinstance(ctx.channel, discord.TextChannel)
+            main_chan_id is None
+            and isinstance(ctx.channel, discord.TextChannel)
             and ctx.channel.id != target_channel.id
         ):
             try:
@@ -1542,18 +1698,19 @@ class Betting(commands.Cog):
             isinstance(ctx.channel, discord.TextChannel)
             and ctx.channel.id != target_channel.id
         ):  # Only send the detailed message if not the main betting channel
+            session_note = f"\n\nSession ID: `{session_id}`"
             if data["settings"]["enable_bet_timer"]:
                 await self._send_embed(
                     ctx,
                     TITLE_BETTING_ROUND_OPENED,
-                    f"Betting round opened for **{name1}** vs **{name2}**! Bets will automatically lock in `{BET_TIMER_DURATION}` seconds.",
+                    f"Betting round opened for **{name1}** vs **{name2}**! Bets will automatically lock in `{BET_TIMER_DURATION}` seconds." + session_note,
                     COLOR_SUCCESS,
                 )
             else:
                 await self._send_embed(
                     ctx,
                     TITLE_BETTING_ROUND_OPENED,
-                    f"Betting round opened for **{name1}** vs **{name2}**! Use `!lockbets` to close.",
+                    f"Betting round opened for **{name1}** vs **{name2}**! Use `!lockbets` to close." + session_note,
                     COLOR_SUCCESS,
                 )
         # If opened in the set bet channel, no additional message needed - live
@@ -1567,11 +1724,45 @@ class Betting(commands.Cog):
             )
 
     @commands.command(name="lockbets", aliases=["lb"])
-    async def lock_bets(self, ctx: commands.Context) -> None:
+    async def lock_bets(self, ctx: commands.Context, target: Optional[str] = None) -> None:
+        """Lock bets. If multi-session mode is active, an optional target (contestant
+        name or session id) may be provided to select which session to lock.
+        If omitted, the command will try to resolve by channel or fall back to a
+        single active session when unambiguous.
+        """
         if not await self._check_permission(ctx, "close betting rounds"):
             return
 
-        await self._lock_bets_internal(ctx)
+        data = load_data()
+
+        # Attempt to resolve a session id when in multi-session mode
+        session_id: Optional[str] = None
+        from data_manager import is_multi_session_mode, find_session_by_contestant
+
+        if is_multi_session_mode(data):
+            if target:
+                # Prefer contestant name resolution first
+                tuple_found = find_session_by_contestant(target, data)
+                if tuple_found:
+                    session_id = tuple_found[0]
+                elif target in data.get("betting_sessions", {}):
+                    session_id = target
+            else:
+                # Try channel-based resolution: if exactly one session is in this channel
+                channel_sessions = [
+                    sid
+                    for sid, s in data.get("betting_sessions", {}).items()
+                    if s.get("channel_id") == getattr(ctx.channel, "id", None)
+                ]
+                if len(channel_sessions) == 1:
+                    session_id = channel_sessions[0]
+                else:
+                    # If only one active session exists globally, pick it
+                    active = data.get("active_sessions", [])
+                    if len(active) == 1:
+                        session_id = active[0]
+
+        await self._lock_bets_internal(ctx, session_id=session_id)
 
     @commands.command(name="declarewinner", aliases=["dw"])
     async def declare_winner(self, ctx: commands.Context, winner: str) -> None:
@@ -1601,9 +1792,19 @@ class Betting(commands.Cog):
             )
             return
 
+        # Attempt to resolve a session id for multi-session mode before locking
+        session_id: Optional[str] = None
+        from data_manager import is_multi_session_mode, find_session_by_contestant
+
+        if is_multi_session_mode(data):
+            # Try to resolve by winner name first (unique contestant names)
+            tuple_found = find_session_by_contestant(winner, data)
+            if tuple_found:
+                session_id = tuple_found[0]
+
         if data["betting"]["open"]:
             await self._lock_bets_internal(
-                ctx, silent_lock=True
+                ctx, silent_lock=True, session_id=session_id
             )  # This will set data["betting"]["locked"] = True, silently
         data = load_data()  # Reload data after locking
 
@@ -2860,6 +3061,21 @@ class Betting(commands.Cog):
             )
             return
 
+        # If the provided session_id is numeric, ensure next_session_id is
+        # advanced to avoid collisions with future implicit numeric ids.
+        from typing import MutableMapping, cast
+        mutable_data = cast(MutableMapping, data)
+        try:
+            numeric = int(session_id)
+            if "next_session_id" not in mutable_data:
+                mutable_data["next_session_id"] = numeric + 1
+            else:
+                if int(mutable_data.get("next_session_id", 1)) <= numeric:
+                    mutable_data["next_session_id"] = numeric + 1
+        except ValueError:
+            # not numeric — nothing to do
+            pass
+
         # Validate contestant names
         contestant1 = contestant1.strip()
         contestant2 = contestant2.strip()
@@ -2941,7 +3157,7 @@ class Betting(commands.Cog):
                 "close_duration": None,
                 "update_interval": 60,
                 "auto_lock_at": None,
-                "auto_close_at": None,
+                "auto_close_at": time.time() + (timer_duration or 300),
             },
             "created_at": time.time(),
             "creator_id": ctx.author.id,
@@ -3343,6 +3559,19 @@ class Betting(commands.Cog):
         logger.info(
             f"Session closed: {session_id} (winner: {winner or 'None'}) by {ctx.author}"
         )
+        # Update the session-specific live message so the final embed shows
+        # the closed/winner summary and isn't overwritten by a batched update.
+        from utils.live_message import (
+            suppress_next_batched_update,
+            schedule_live_message_update_for_session,
+        )
+
+        await update_live_message(
+            self.bot, data, betting_closed=True, close_summary="Session closed", winner_declared=bool(winner), winner_info=None, session_id=session_id
+        )
+
+        suppress_next_batched_update()
+        schedule_live_message_update_for_session(session_id)
 
 
 async def setup(bot: commands.Bot):

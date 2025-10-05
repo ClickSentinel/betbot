@@ -113,3 +113,7 @@ python -m pytest tests/test_betting.py -v
 - **Bet changes**: See before/after confirmation with net change
 - **Timer**: 90-second rounds with updates at 5-second intervals
 - **Live updates**: Bet changes update the live message every 5 seconds
+
+Per-session live messages & timers
+---------------------------------
+When you start a session using `!openbet` or `!opensession`, the bot posts a dedicated live embed to the configured bet channel. Each session has an independent timer (if enabled) and the live embed displays the precise remaining time for that session.
