@@ -1,0 +1,92 @@
+#!/bin/bash
+# Pre-commit hook to prevent committing sensitive files
+# 
+# Installation:
+#   cp pre-commit.example .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# This hook will:
+# 1. Prevent committing .env files
+# 2. Prevent committing data.json
+# 3. Warn about potential hardcoded tokens
+# 4. Check for Discord token patterns
+
+echo "🔍 Running security pre-commit checks..."
+
+# Check for sensitive files being committed
+SENSITIVE_FILES=$(git diff --cached --name-only | grep -E "\.env$|data\.json$|secrets|credentials")
+
+if [ ! -z "$SENSITIVE_FILES" ]; then
+    echo "❌ ERROR: Attempting to commit sensitive files:"
+    echo "$SENSITIVE_FILES"
+    echo ""
+    echo "These files should never be committed to git!"
+    echo "Please remove them from the commit: git reset HEAD <file>"
+    exit 1
+fi
+
+# Check for potential hardcoded tokens in Python files
+POTENTIAL_TOKENS=$(git diff --cached | grep -E "^\+.*TOKEN.*=.*['\"][A-Za-z0-9]{50,}")
+
+if [ ! -z "$POTENTIAL_TOKENS" ]; then
+    echo "⚠️  WARNING: Possible hardcoded token detected in staged changes:"
+    echo "$POTENTIAL_TOKENS"
+    echo ""
+    echo "Tokens should be stored in environment variables, not in code!"
+    echo "Example: TOKEN = os.getenv('DISCORD_TOKEN')"
+    echo ""
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Commit cancelled"
+        exit 1
+    fi
+fi
+
+# Check for Discord token patterns (they start with MTI, M, N, O)
+DISCORD_TOKENS=$(git diff --cached | grep -E "^\+.*(MTI|M[A-Z]|N[A-Z]|O[A-Z])[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}")
+
+if [ ! -z "$DISCORD_TOKENS" ]; then
+    echo "❌ ERROR: Discord token pattern detected!"
+    echo "This looks like an actual Discord bot token!"
+    echo ""
+    echo "NEVER commit Discord tokens to git!"
+    echo "If you've already pushed this, regenerate your token immediately at:"
+    echo "https://discord.com/developers/applications"
+    echo ""
+    exit 1
+fi
+
+# Check for other common secret patterns
+SECRET_PATTERNS=$(git diff --cached | grep -iE "^\+.*(password|secret|api_key|apikey).*=.*['\"][^'\"]{20,}")
+
+if [ ! -z "$SECRET_PATTERNS" ]; then
+    echo "⚠️  WARNING: Possible hardcoded secret detected:"
+    echo "$SECRET_PATTERNS"
+    echo ""
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Commit cancelled"
+        exit 1
+    fi
+fi
+
+# Check for .log files
+LOG_FILES=$(git diff --cached --name-only | grep "\.log$")
+
+if [ ! -z "$LOG_FILES" ]; then
+    echo "⚠️  WARNING: Attempting to commit log files:"
+    echo "$LOG_FILES"
+    echo ""
+    echo "Log files may contain sensitive information and are typically ignored."
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Commit cancelled"
+        exit 1
+    fi
+fi
+
+echo "✅ Security checks passed!"
+exit 0
