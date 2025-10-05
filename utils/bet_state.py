@@ -155,7 +155,7 @@ class BetState:
     def __init__(self, data: Data):
         self.data = data
         self.economy = Economy(data)
-    
+
     def update_data(self, data: Data) -> None:
         """Update the BetState with fresh data."""
         self.data = data
