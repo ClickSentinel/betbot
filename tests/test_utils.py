@@ -45,9 +45,12 @@ def enhanced_test_data():
         "bob": "Bob",
         "charlie": "Charlie",
     }
-    data["betting"]["bets"] = {
-        "user1": {"amount": 100, "choice": "alice", "emoji": "🔥"}
-    }
+    # Use accessor to populate initial bet for consistency with production code
+    from data_manager import set_bet
+    from utils.bet_state import make_bet_info
+    from data_manager import Data
+    from typing import cast
+    set_bet(cast(Data, data), None, "user1", make_bet_info(100, "alice", "🔥"))
 
     return data
 

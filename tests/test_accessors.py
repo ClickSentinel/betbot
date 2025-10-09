@@ -25,7 +25,8 @@ def test_get_set_remove_bets(test_data):
 
     # Legacy fallback (no session)
     test_data["multi_session_mode"] = False
-    test_data["betting"]["bets"] = {}
+    # ensure canonical structure
+    test_data["betting"].setdefault("bets", {})
     set_bet(test_data, None, "u2", {"amount": 50, "choice": "bob", "emoji": None})
     bets_legacy = get_bets(test_data)
     assert "u2" in bets_legacy

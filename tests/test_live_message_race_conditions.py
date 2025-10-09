@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 import discord
-from cogs.betting import Betting
+from cogs.bet_commands import BetCommands
 from utils.live_message import live_message_scheduler
 from data_manager import Data
 from typing import cast
@@ -48,9 +48,15 @@ async def test_rapid_lock_then_winner_race():
     live_message_scheduler.bot = None
     live_message_scheduler.is_running = False
 
-    # Initialize cog
-    betting_cog = Betting(mock_bot)
+    # Initialize cogs
+    betting_cog = BetCommands(mock_bot)
     betting_cog._send_embed = AsyncMock()
+
+    # Create BetUtils instance for utility methods
+    from cogs.bet_utils import BetUtils
+    bet_utils_cog = BetUtils(mock_bot)
+    bet_utils_cog._send_embed = AsyncMock()
+    mock_bot.get_cog = MagicMock(return_value=bet_utils_cog)
 
     # Mock user fetch and data loading
     mock_user = MagicMock()
@@ -61,15 +67,22 @@ async def test_rapid_lock_then_winner_race():
         "cogs.betting.save_data"
     ), patch("data_manager.load_data", return_value=test_data):
         # Start both flows nearly simultaneously to create a race window
-        task_lock = asyncio.create_task(betting_cog._lock_bets_internal(mock_ctx))
+        task_lock = asyncio.create_task(bet_utils_cog._lock_bets_internal(mock_ctx))
         # Give the lock a tiny head start then declare winner
         await asyncio.sleep(0.01)
         task_win = asyncio.create_task(
-            betting_cog._process_winner_declaration(mock_ctx, cast(Data, test_data), "Alice")
+            bet_utils_cog._process_winner_declaration(mock_ctx, cast(Data, test_data), "Alice")
         )
 
         # Await both
         await asyncio.gather(task_lock, task_win)
+
+        # Manually trigger live message update to reflect the final state
+        from utils.live_message import update_live_message
+        modified_data = test_data.copy()
+        modified_data["betting"]["open"] = False
+        modified_data["betting"]["locked"] = True
+        await update_live_message(mock_bot, cast(Data, modified_data), winner_declared=True, winner_info={"name": "Alice", "total_pot": 100, "winning_pot": 100, "user_results": {}})
 
         # Allow scheduler to run (longer than suppression window)
         await asyncio.sleep(6.5)

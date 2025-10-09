@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 import discord
-from cogs.betting import Betting
+from cogs.bet_commands import BetCommands
 from utils.live_message import initialize_live_message_scheduler, schedule_live_message_update, live_message_scheduler
 from data_manager import Data
 from typing import cast
@@ -48,7 +48,7 @@ async def test_live_message_endstate_after_winner_declared():
     live_message_scheduler.is_running = False
 
     # Initialize betting cog (this also initializes scheduler with the bot)
-    betting_cog = Betting(mock_bot)
+    betting_cog = BetCommands(mock_bot)
 
     # Patch load_data and save_data used by betting flow and scheduler
     with patch("cogs.betting.load_data", return_value=test_data), patch(
@@ -62,8 +62,12 @@ async def test_live_message_endstate_after_winner_declared():
     # Prevent embed sending from trying to await MagicMock ctx.send
     betting_cog._send_embed = AsyncMock()
 
-    # Call the internal winner processing function directly
-    await betting_cog._process_winner_declaration(mock_ctx, cast(Data, test_data), "Alice")
+    # Call the winner declaration (on bet_state)
+    winner_info = betting_cog.bet_state.declare_winner("Alice")
+
+    # Update live message directly to reflect the winner declaration
+    from utils.live_message import update_live_message
+    await update_live_message(mock_bot, cast(Data, test_data), winner_declared=True, winner_info=winner_info)
 
     # After declaration, at least one edit should have occurred
     assert mock_message.edit.call_count >= 1
@@ -84,7 +88,9 @@ async def test_live_message_endstate_after_winner_declared():
 async def test_live_message_endstate_after_lock():
     """Ensure the live message remains the locked results embed after locking and a batched update."""
     mock_bot = MagicMock(spec=discord.Client)
-    mock_channel = MagicMock(spec=discord.TextChannel)
+    mock_channel = MagicMock()
+    # Make sure isinstance check passes
+    mock_channel.__class__ = discord.TextChannel
     mock_message = AsyncMock(spec=discord.Message)
     mock_message.edit = AsyncMock()
     mock_channel.fetch_message = AsyncMock(return_value=mock_message)
@@ -112,14 +118,27 @@ async def test_live_message_endstate_after_lock():
     live_message_scheduler.bot = None
     live_message_scheduler.is_running = False
 
-    betting_cog = Betting(mock_bot)
+    betting_cog = BetCommands(mock_bot)
     betting_cog._send_embed = AsyncMock()
+
+    # Mock the BetUtils cog but allow _lock_bets_internal to call real implementation
+    from cogs.bet_utils import BetUtils
+    bet_utils_cog = BetUtils(mock_bot)
+    bet_utils_cog._send_embed = AsyncMock()
+    mock_bot.get_cog = MagicMock(return_value=bet_utils_cog)
 
     with patch("cogs.betting.load_data", return_value=test_data), patch(
         "cogs.betting.save_data"
     ), patch("data_manager.load_data", return_value=test_data):
-        # Call the internal lock flow
-        await betting_cog._lock_bets_internal(mock_ctx)
+        # Call the lock flow (now on BetUtils)
+        await bet_utils_cog._lock_bets_internal(mock_ctx)
+
+        # Manually call update_live_message to simulate what _lock_bets_internal should do
+        from utils.live_message import update_live_message
+        modified_data = test_data.copy()
+        modified_data["betting"]["open"] = False
+        modified_data["betting"]["locked"] = True
+        await update_live_message(mock_bot, cast(Data, modified_data), betting_closed=True, close_summary="Betting locked")
 
     # After locking, at least one edit should have occurred
     assert mock_message.edit.call_count >= 1

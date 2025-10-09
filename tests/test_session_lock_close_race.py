@@ -3,7 +3,7 @@ import asyncio
 import time
 from unittest.mock import MagicMock, AsyncMock, patch
 import discord
-from cogs.betting import Betting
+from cogs.bet_commands import BetCommands
 from utils.live_message import live_message_scheduler
 
 
@@ -73,7 +73,7 @@ async def test_session_auto_close_and_race():
     live_message_scheduler.bot = None
     live_message_scheduler.is_running = False
 
-    betting_cog = Betting(mock_bot)
+    betting_cog = BetCommands(mock_bot)
     betting_cog._send_embed = AsyncMock()
 
     mock_user = MagicMock()

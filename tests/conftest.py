@@ -1,3 +1,67 @@
+import importlib
+from unittest.mock import MagicMock
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def disable_save_data(monkeypatch):
+    """
+    Replace `save_data` with a no-op MagicMock in common modules so tests
+    don't have to patch it inline. This centralizes the pattern and prevents
+    accidental disk writes during test runs.
+
+    The fixture is autouse so existing tests that used `with patch(...save_data)`
+    become redundant and will continue to work without modification.
+    """
+    mock = MagicMock(name="save_data")
+
+    # Common module import paths used across the test-suite and source
+    module_names = [
+        "data_manager",
+        "cogs.bet_commands",
+        "cogs.bet_utils",
+        "cogs.reaction_handler",
+        "cogs.live_message_manager",
+        "cogs.session_manager",
+        "cogs.economy",
+        "utils.bet_state",
+        "utils.live_message",
+    ]
+
+    # Patch any of the above that are importable in the test environment.
+    for mod_name in module_names:
+        try:
+            mod = importlib.import_module(mod_name)
+            if hasattr(mod, "save_data"):
+                monkeypatch.setattr(mod, "save_data", mock)
+        except ModuleNotFoundError:
+            # Some test contexts import via the package name (betbot.*). We'll
+            # try those below instead of failing here.
+            continue
+
+    # Also attempt package-qualified module names to be thorough.
+    alt_names = [
+        "betbot.data_manager",
+        "betbot.cogs.bet_commands",
+        "betbot.cogs.bet_utils",
+        "betbot.cogs.reaction_handler",
+        "betbot.cogs.live_message_manager",
+        "betbot.cogs.session_manager",
+        "betbot.utils.bet_state",
+        "betbot.utils.live_message",
+        "betbot.cogs.economy",
+    ]
+
+    for mod_name in alt_names:
+        try:
+            mod = importlib.import_module(mod_name)
+            if hasattr(mod, "save_data"):
+                monkeypatch.setattr(mod, "save_data", mock)
+        except ModuleNotFoundError:
+            continue
+
+    return mock
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import discord

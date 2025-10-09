@@ -11,6 +11,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import data_manager
+from data_manager import set_bet
+from utils.bet_state import make_bet_info
+from unittest.mock import patch
 
 
 class TestMessagingMathValidation:
@@ -72,11 +75,7 @@ class TestMessagingMathValidation:
 
         # Simulate bet placement
         test_data["balances"][user_id] -= bet_amount
-        test_data["betting"]["bets"][user_id] = {
-            "choice": "alice",
-            "amount": bet_amount,
-            "emoji": None,
-        }
+        set_bet(test_data, None, user_id, make_bet_info(bet_amount, "alice", None))
 
         actual_new_balance = test_data["balances"][user_id]
 
@@ -161,11 +160,7 @@ class TestMessagingMathValidation:
 
             # Simulate betall - bet entire balance
             test_data["balances"][user_id] -= balance
-            test_data["betting"]["bets"][user_id] = {
-                "choice": "alice",
-                "amount": balance,
-                "emoji": None,
-            }
+            set_bet(test_data, None, user_id, make_bet_info(balance, "alice", None))
 
             # Balance should be 0 after betting everything
             final_balance = test_data["balances"][user_id]
@@ -217,11 +212,7 @@ class TestMessagingMathValidation:
 
         # Simulate betting exact balance
         test_data["balances"][user_id] -= balance
-        test_data["betting"]["bets"][user_id] = {
-            "choice": "alice",
-            "amount": balance,
-            "emoji": None,
-        }
+        set_bet(test_data, None, user_id, make_bet_info(balance, "alice", None))
 
         assert (
             test_data["balances"][user_id] == 0

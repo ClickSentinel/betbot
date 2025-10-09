@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands
 import asyncio
 
-from cogs.betting import Betting
+from cogs.reaction_handler import ReactionHandler
 from data_manager import load_data, save_data
 
 
@@ -28,8 +28,8 @@ class TestReactionBetChanges:
 
     @pytest.fixture
     def betting_cog(self, mock_bot):
-        """Create betting cog instance."""
-        return Betting(mock_bot)
+        """Create reaction handler cog instance."""
+        return ReactionHandler(mock_bot)
 
     @pytest.fixture
     def test_data(self):

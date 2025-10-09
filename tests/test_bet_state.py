@@ -10,6 +10,9 @@ if project_root not in sys.path:
 
 from utils.bet_state import BetState, Economy
 from utils.bet_state import BetInfo, WinnerInfo
+from data_manager import set_bet
+from utils.bet_state import make_bet_info
+from unittest.mock import patch
 
 
 class TestBetState:
@@ -62,9 +65,7 @@ class TestBetState:
         test_data["betting"]["open"] = False
         test_data["betting"]["locked"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
-        test_data["betting"]["bets"] = {
-            user_id: {"amount": 100, "choice": "alice", "emoji": None}
-        }
+        set_bet(test_data, None, user_id, make_bet_info(100, "alice", None))
         test_data["balances"][user_id] = 900
 
         # Execute
@@ -83,10 +84,8 @@ class TestBetState:
         test_data["betting"]["open"] = False
         test_data["betting"]["locked"] = True
         test_data["betting"]["contestants"] = {"1": "Alice", "2": "Bob"}
-        test_data["betting"]["bets"] = {
-            users[0]: {"amount": 100, "choice": "alice", "emoji": None},
-            users[1]: {"amount": 100, "choice": "alice", "emoji": None},
-        }
+        set_bet(test_data, None, users[0], make_bet_info(100, "alice", None))
+        set_bet(test_data, None, users[1], make_bet_info(100, "alice", None))
         test_data["balances"].update({users[0]: 900, users[1]: 900})
 
         # Execute

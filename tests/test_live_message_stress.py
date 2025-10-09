@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 import discord
-from cogs.betting import Betting
+from cogs.bet_commands import BetCommands
 from utils.live_message import live_message_scheduler
 from data_manager import Data
 from typing import cast
@@ -28,7 +28,7 @@ async def test_stress_rapid_lock_and_winner_cycles():
     mock_channel.fetch_message = AsyncMock(return_value=mock_message)
     mock_bot.get_channel = MagicMock(return_value=mock_channel)
 
-    betting_cog = Betting(mock_bot)
+    betting_cog = BetCommands(mock_bot)
     betting_cog._send_embed = AsyncMock()
 
     base_data = {
@@ -53,7 +53,10 @@ async def test_stress_rapid_lock_and_winner_cycles():
         iteration_data = copy.deepcopy(base_data)
         # add a bet from a unique user to vary data a bit
         uid = str(100000 + i)
-        iteration_data["betting"]["bets"][uid] = {"amount": 100, "choice": "Alice", "emoji": None}
+        from data_manager import set_bet, Data
+        from utils.bet_state import make_bet_info
+        from typing import cast
+        set_bet(cast(Data, iteration_data), None, uid, make_bet_info(100, "Alice", None))
 
         # reset scheduler state
         live_message_scheduler.stop()

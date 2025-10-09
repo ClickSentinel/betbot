@@ -10,7 +10,7 @@ from discord.ext import commands
 import asyncio
 import time
 
-from cogs.betting import Betting
+from cogs.reaction_handler import ReactionHandler
 
 
 class TestReactionBettingRaceConditionFix:
@@ -26,8 +26,8 @@ class TestReactionBettingRaceConditionFix:
 
     @pytest.fixture
     def betting_cog(self, mock_bot):
-        """Create betting cog instance."""
-        return Betting(mock_bot)
+        """Create reaction handler cog instance."""
+        return ReactionHandler(mock_bot)
 
     def test_programmatic_removal_tracking_system(self, betting_cog):
         """Test the core programmatic removal tracking system."""

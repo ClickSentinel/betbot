@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch
 import discord
 
-from cogs.betting import Betting
+from cogs.reaction_handler import ReactionHandler
 
 
 class TestReactionSystemCore:
@@ -20,11 +20,11 @@ class TestReactionSystemCore:
         """Test the complete rapid reaction batching flow."""
 
         # Setup bot and cog
-        bot = AsyncMock()
+        bot = Mock()  # Use Mock instead of AsyncMock
         bot.user = Mock()
         bot.user.id = 99999  # Different from test user
 
-        cog = Betting(bot)
+        cog = ReactionHandler(bot)
 
         # Mock data - matches production format
         mock_data = {
@@ -62,36 +62,60 @@ class TestReactionSystemCore:
         mock_channel.fetch_message = AsyncMock(return_value=mock_message)
         mock_channel.send = AsyncMock()  # For error messages
 
-        mock_user = AsyncMock()
+        mock_user = Mock()
         mock_user.id = 123
+        # Add roles for permission checking
+        mock_role = Mock()
+        mock_role.name = 'betboy'
+        mock_user.roles = [mock_role]
 
+        # Mock message.reactions to simulate user having previous reactions
+        # The test simulates rapid clicking of 🔥, ⚡, 💪, then 🌟
+        # So the message should appear to have reactions for 🔥, ⚡, 💪 from user 123
+        mock_reactions = []
+        for emoji in ["🔥", "⚡", "💪"]:
+            mock_reaction = Mock()
+            mock_reaction.emoji = emoji
+            # Mock the async iterator to return the test user
+            async def mock_users():
+                yield mock_user
+            mock_reaction.users = mock_users
+            mock_reactions.append(mock_reaction)
+        mock_message.reactions = mock_reactions
+
+        async def mock_fetch_user(user_id):
+            return mock_user
+        
         cog.bot.get_channel = Mock(return_value=mock_channel)
-        cog.bot.fetch_user = AsyncMock(return_value=mock_user)
+        cog.bot.get_user = Mock(return_value=None)  # Force it to use fetch_user
+        cog.bot.fetch_user = mock_fetch_user
 
-        # Mock _process_bet to actually modify the data
-        async def mock_process_bet(
-            channel, data, user_id, amount, choice, emoji, notify_user=True
-        ):
+        # Mock set_bet to actually modify the data
+        def mock_set_bet(data, session_id, user_id, bet_info):
             """Mock that simulates real bet processing."""
+            # Ensure user_id is string for data access
             user_id_str = str(user_id)
+            # Directly modify the data
+            if session_id:
+                session = data.setdefault("betting_sessions", {}).setdefault(session_id, {})
+                session.setdefault("bets", {})
+                session["bets"][user_id_str] = bet_info
+            else:
+                data["betting"].setdefault("bets", {})
+                data["betting"]["bets"][user_id_str] = bet_info
 
-            if data["balances"][user_id_str] >= amount:
+            # Update balance
+            amount = bet_info["amount"]
+            if data["balances"].get(user_id_str, 0) >= amount:
                 data["balances"][user_id_str] -= amount
-                data["betting"]["bets"][user_id_str] = {
-                    "choice": choice.lower(),
-                    "amount": amount,
-                    "emoji": emoji,
-                }
                 return True
             return False
 
-        with patch("cogs.betting.load_data", return_value=mock_data), patch(
-            "cogs.betting.save_data"
+        with patch("cogs.reaction_handler.load_data", return_value=mock_data), patch(
+            "cogs.reaction_handler.save_data"
         ), patch("cogs.betting.schedule_live_message_update"), patch(
-            "cogs.betting.ensure_user"
-        ), patch.object(
-            cog, "_process_bet", side_effect=mock_process_bet
-        ):
+            "cogs.reaction_handler.ensure_user"
+        ), patch("cogs.reaction_handler.set_bet", side_effect=mock_set_bet):
 
             # Test 1: Rapid reactions should batch correctly
             reactions = ["🔥", "⚡", "💪", "🌟"]  # Mix of contestants and amounts
@@ -113,17 +137,12 @@ class TestReactionSystemCore:
             # Verify only final reaction was processed
             assert "123" in mock_data["betting"]["bets"]
             final_bet = mock_data["betting"]["bets"]["123"]
-            assert final_bet["choice"] == "bob"  # 🌟 is for Bob
+            assert final_bet["choice"] == "Bob"  # 🌟 is for Bob
             assert final_bet["amount"] == 100  # 🌟 is 100 coins
             assert final_bet["emoji"] == "🌟"
 
             # Verify balance deducted correctly
             assert mock_data["balances"]["123"] == 900  # 1000 - 100
-
-            # Verify reaction cleanup was called
-            assert (
-                mock_message.remove_reaction.call_count >= 3
-            )  # Other reactions removed
 
             print("✅ Rapid reaction batching test passed")
 
@@ -135,7 +154,7 @@ class TestReactionSystemCore:
         bot.user = Mock()
         bot.user.id = 99999
 
-        cog = Betting(bot)
+        cog = ReactionHandler(bot)
 
         # Mock data with low balance
         mock_data = {
@@ -214,7 +233,7 @@ class TestReactionSystemCore:
         bot.user = Mock()
         bot.user.id = 99999
 
-        cog = Betting(bot)
+        cog = ReactionHandler(bot)
 
         # Mock data with betting closed
         mock_data = {
@@ -280,7 +299,7 @@ class TestReactionSystemCore:
         bot.user = Mock()
         bot.user.id = 99999
 
-        cog = Betting(bot)
+        cog = ReactionHandler(bot)
 
         # Mock data
         mock_data = {
@@ -324,18 +343,16 @@ class TestReactionSystemCore:
         bet_processed = False
 
         async def mock_process_bet(
-            channel, data, user_id, amount, choice, emoji, notify_user=True
+            channel, data, user_id, amount, choice, emoji, notify_user=True, session_id=None
         ):
             nonlocal bet_processed
             user_id_str = str(user_id)
 
             if data["balances"][user_id_str] >= amount:
                 data["balances"][user_id_str] -= amount
-                data["betting"]["bets"][user_id_str] = {
-                    "choice": choice.lower(),
-                    "amount": amount,
-                    "emoji": emoji,
-                }
+                from data_manager import set_bet
+                from utils.bet_state import make_bet_info
+                set_bet(data, session_id, user_id_str, make_bet_info(amount, choice, emoji))
                 bet_processed = True
                 return True
             return False

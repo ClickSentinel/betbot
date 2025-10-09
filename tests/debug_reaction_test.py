@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch
 import discord
 
-from cogs.betting import Betting
+from cogs.reaction_handler import ReactionHandler
 
 
 @pytest.mark.asyncio
@@ -19,7 +19,7 @@ async def test_debug_reaction_processing():
     bot.user = Mock()
     bot.user.id = 99999  # Different from our test user ID (123)
 
-    cog = Betting(bot)
+    cog = ReactionHandler(bot)
 
     # Mock data
     mock_data = {
@@ -65,12 +65,12 @@ async def test_debug_reaction_processing():
     bot.get_channel.return_value = mock_channel
     bot.fetch_user.return_value = mock_user
 
-    with patch("cogs.betting.load_data", return_value=mock_data) as mock_load, patch(
-        "cogs.betting.save_data"
+    with patch("cogs.reaction_handler.load_data", return_value=mock_data) as mock_load, patch(
+        "cogs.reaction_handler.save_data"
     ) as mock_save, patch(
-        "cogs.betting.schedule_live_message_update"
+        "cogs.reaction_handler.schedule_live_message_update"
     ) as mock_schedule, patch(
-        "cogs.betting.ensure_user"
+        "cogs.reaction_handler.ensure_user"
     ) as mock_ensure:
 
         print(f"Initial data: {mock_data}")

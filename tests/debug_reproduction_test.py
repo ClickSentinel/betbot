@@ -7,7 +7,7 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch
 import discord
 
-from cogs.betting import Betting
+from cogs.reaction_handler import ReactionHandler
 
 
 @pytest.mark.asyncio
@@ -19,7 +19,7 @@ async def test_reproduction_case():
     bot.user = Mock()
     bot.user.id = 99999  # Different from test user
 
-    cog = Betting(bot)
+    cog = ReactionHandler(bot)
 
     # Mock data
     mock_data = {
@@ -65,31 +65,6 @@ async def test_reproduction_case():
     bot.get_channel.return_value = mock_channel
     bot.fetch_user.return_value = mock_user
 
-    # Patch _process_bet to actually modify the data
-    original_process_bet = cog._process_bet
-
-    async def mock_process_bet(
-        channel, data, user_id, amount, choice, emoji, notify_user=True
-    ):
-        """Mock _process_bet that actually modifies the data like the real one."""
-        user_id_str = str(user_id)
-
-        # Deduct balance
-        if data["balances"][user_id_str] >= amount:
-            data["balances"][user_id_str] -= amount
-
-            # Add bet
-            data["betting"]["bets"][user_id_str] = {
-                "choice": choice.lower(),
-                "amount": amount,
-                "emoji": emoji,
-            }
-            print(f"✅ Mock bet processed: {choice} for {amount} coins")
-            return True
-        else:
-            print(f"❌ Mock bet failed: insufficient balance")
-            return False
-
     # Set up proper async mocks for Discord API calls
     mock_channel = AsyncMock(spec=discord.TextChannel)
     mock_channel.id = 888
@@ -106,12 +81,10 @@ async def test_reproduction_case():
     cog.bot.get_channel = Mock(return_value=mock_channel)
     cog.bot.fetch_user = AsyncMock(return_value=mock_user)
 
-    with patch("cogs.betting.load_data", return_value=mock_data), patch(
-        "cogs.betting.save_data"
-    ), patch("cogs.betting.schedule_live_message_update"), patch(
-        "cogs.betting.ensure_user"
-    ), patch.object(
-        cog, "_process_bet", side_effect=mock_process_bet
+    with patch("cogs.reaction_handler.load_data", return_value=mock_data), patch(
+        "cogs.reaction_handler.save_data"
+    ), patch("cogs.reaction_handler.schedule_live_message_update"), patch(
+        "cogs.reaction_handler.ensure_user"
     ):
 
         print("=== Reproducing the Issue ===")

@@ -153,7 +153,7 @@ def test_extreme_balance_scenarios():
     assert data["balances"]["rich_user"] == 999999999
 
 
-def test_concurrent_session_betting():
+def test_concurrent_session_BetCommands():
     """Test users betting on multiple sessions simultaneously."""
     data = create_test_data_with_sessions()
 

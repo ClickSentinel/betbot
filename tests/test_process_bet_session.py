@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock
 import discord
-from cogs.betting import Betting
+from cogs.bet_utils import BetUtils
 from data_manager import save_data
 
 
@@ -37,7 +37,7 @@ async def test_process_bet_writes_session_bet(test_data, mock_bot, mock_message,
     test_data["balances"][str(mock_ctx.author.id)] = 1000
 
     # Create a Betting cog with a mock bot
-    betting_cog = Betting(mock_bot)
+    betting_cog = BetUtils(mock_bot)
 
     # Act: place a bet via the internal _process_bet
     result = await betting_cog._process_bet(mock_ctx.channel, test_data, str(mock_ctx.author.id), 200, "Alice", emoji=None, notify_user=False)
