@@ -8,7 +8,12 @@ from discord.ext import commands
 
 
 from data_manager import Data, save_data, load_data
-from utils.live_message import update_live_message, schedule_live_message_update
+from utils.live_message import (
+    update_live_message,
+    schedule_live_message_update,
+    schedule_live_message_update_for_session,
+)
+from data_manager import get_active_sessions
 from utils.logger import logger
 
 
@@ -18,6 +23,7 @@ class BettingTimer:
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.timer_task: Optional[asyncio.Task] = None
+        self.session_monitor_task: Optional[asyncio.Task] = None
         self.timeout_callback = None
 
     def cancel_timer(self):
@@ -37,6 +43,9 @@ class BettingTimer:
         """Start a betting timer for the specified duration."""
         self.timeout_callback = timeout_callback
         self.timer_task = asyncio.create_task(self._run_timer(ctx, total_duration))
+        # Ensure the session monitor is running so multi-session timers are processed
+        if not self.session_monitor_task or self.session_monitor_task.done():
+            self.session_monitor_task = asyncio.create_task(self._run_session_monitor())
         logger.info(f"Betting timer started for {total_duration} seconds")
 
     async def _run_timer(self, ctx: commands.Context, total_duration: int):
@@ -101,6 +110,105 @@ class BettingTimer:
                 self.clear_timer_state_in_data(data)
             except Exception:
                 pass  # Don't let cleanup errors break the error handler
+
+    async def _run_session_monitor(self):
+        """
+        Background monitor that iterates active sessions and processes per-session
+        timers based on `timer_config.auto_close_at` and related fields.
+        """
+        import time as time_module
+
+        try:
+            while True:
+                data = load_data()
+
+                # Iterate active sessions and handle auto-close/auto-lock
+                for session_id in data.get("active_sessions", []):
+                    session = data.get("betting_sessions", {}).get(session_id)
+                    if not session:
+                        continue
+
+                    tc = session.get("timer_config") or {}
+                    if not tc.get("enabled"):
+                        continue
+
+                    now = time_module.time()
+
+                    # Prefer auto_close_at (session-level precise close time)
+                    auto_close = tc.get("auto_close_at")
+                    # Optionally support auto_lock_at if provided
+                    auto_lock = tc.get("auto_lock_at")
+
+                    # If auto_lock is present and we've passed it, mark locked
+                    if auto_lock and session.get("status") == "open" and auto_lock <= now:
+                        # Lock this session
+                        await self._auto_lock_bets_for_session(session_id, data)
+
+                    # If auto_close is present and we've passed it, finalize/close
+                    if auto_close and session.get("status") != "completed" and auto_close <= now:
+                        # Mark session as completed/closed and update live message
+                        await self._auto_close_session(session_id, data)
+
+                # Throttle checks to once per second
+                await asyncio.sleep(1)
+
+        except asyncio.CancelledError:
+            logger.info("Session monitor cancelled")
+        except Exception as e:
+            logger.error(f"Error in session monitor: {e}", exc_info=True)
+
+    async def _auto_lock_bets_for_session(self, session_id: str, data):
+        """Lock a specific session when its timer triggers auto-lock."""
+        from config import MSG_BETTING_TIMER_EXPIRED_SUMMARY
+
+        session = data.get("betting_sessions", {}).get(session_id)
+        if not session:
+            return
+
+        logger.info(f"Auto-locking session {session_id} due to timer")
+
+        # Change status to locked
+        session["status"] = "locked"
+        # Persist timer/lock state
+        save_data(data)
+
+        # Create summary tailored for the session
+        total_bets = len(session.get("bets", {}))
+        lock_summary = MSG_BETTING_TIMER_EXPIRED_SUMMARY.format(
+            total_bets=total_bets,
+            bet_summary="Timer expired - bets are now locked",
+        )
+
+        # Update the session live message immediately
+        try:
+            await update_live_message(self.bot, data, betting_closed=True, close_summary=lock_summary, session_id=session_id)
+        except Exception:
+            logger.exception("Failed to update live message for session lock")
+
+        # Schedule a batched update for the session to allow pending operations
+        schedule_live_message_update_for_session(session_id)
+
+    async def _auto_close_session(self, session_id: str, data):
+        """Finalize/close a session when its timer triggers auto-close."""
+        session = data.get("betting_sessions", {}).get(session_id)
+        if not session:
+            return
+
+        logger.info(f"Auto-closing session {session_id} due to timer")
+
+        # Mark session as completed
+        session["status"] = "completed"
+        session["closed_at"] = __import__("time").time()
+        save_data(data)
+
+        # Update live message to show closed/completed status
+        try:
+            await update_live_message(self.bot, data, betting_closed=True, close_summary="Session closed by timer", session_id=session_id)
+        except Exception:
+            logger.exception("Failed to update live message for session close")
+
+        # Also schedule a batched update for the session id
+        schedule_live_message_update_for_session(session_id)
 
     async def _auto_lock_bets(self, ctx: commands.Context, data: Data):
         """Automatically lock bets when timer expires."""

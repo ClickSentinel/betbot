@@ -32,23 +32,54 @@ class LiveMessageScheduler:
     def set_bot(self, bot: discord.Client) -> None:
         """Set the bot instance for making Discord API calls."""
         self.bot = bot
+        # If there are pending updates queued before the bot was available,
+        # start the update loop now so they will be processed.
+        try:
+            if self.pending_updates and not self.is_running:
+                self.is_running = True
+                if self.update_task:
+                    try:
+                        self.update_task.cancel()
+                    except Exception:
+                        pass
+                self.update_task = asyncio.create_task(self._update_loop())
+        except RuntimeError:
+            # If there's no running event loop (rare during tests or startup),
+            # defer starting the loop until later. The loop will be started
+            # when schedule_update is called while the loop is available.
+            pass
 
     def schedule_update(self, data_identifier: str = "default") -> None:
         """Schedule a live message update. Multiple calls within 5 seconds are batched."""
+        # If no bot is set, ignore the update (previous behavior expected
+        # by existing tests).
         if not self.bot:
             return
 
+        # Queue the identifier for processing
+        # Instrumentation: print queued identifier for easier correlation in logs
+        try:
+            print(f"LiveMessageScheduler: Queued update for '{data_identifier}'")
+        except Exception:
+            pass
         self.pending_updates.add(data_identifier)
-        # No additional params are stored for batched updates. If callers need
-        # to prevent the batched update from overwriting a special immediate
-        # update, they should call `suppress_next_batched_update`.
 
         # Start the update loop if not already running
         if not self.is_running:
             self.is_running = True
             if self.update_task:
-                self.update_task.cancel()
-            self.update_task = asyncio.create_task(self._update_loop())
+                try:
+                    self.update_task.cancel()
+                except Exception:
+                    pass
+            # Creating a task requires a running event loop; guard against
+            # RuntimeError where no loop is available (e.g., some test contexts).
+            try:
+                self.update_task = asyncio.create_task(self._update_loop())
+            except RuntimeError:
+                # Event loop not running; mark not running so the loop can
+                # be started later when set_bot is called in an active loop.
+                self.is_running = False
 
     async def _update_loop(self) -> None:
         """Process batched updates every 5 seconds."""
@@ -84,10 +115,18 @@ class LiveMessageScheduler:
                     if len(updates_to_process) == 1 and next(iter(updates_to_process)) != "default":
                         identifier = next(iter(updates_to_process))
                         try:
+                            print(f"LiveMessageScheduler: Processing session-targeted update for '{identifier}'")
+                        except Exception:
+                            pass
+                        try:
                             await update_live_message(self.bot, data, session_id=identifier)
                         except Exception as e:
                             print(f"Error updating live message for {identifier}: {e}")
                     else:
+                        try:
+                            print(f"LiveMessageScheduler: Processing global update for identifiers: {updates_to_process}")
+                        except Exception:
+                            pass
                         try:
                             await update_live_message(self.bot, data)
                         except Exception as e:
@@ -260,6 +299,21 @@ def get_live_message_link(bot: discord.Client, data: Data, is_active: bool) -> s
     return ""
 
 
+def get_live_message_link_for_session(bot: discord.Client, data: Data, session_id: Optional[str] = None) -> str:
+    """Generates a link to the live betting message for a specific session or legacy."""
+    if session_id:
+        # Get session-specific live message
+        msg_id, chan_id = get_session_live_message_info(data, session_id)
+    else:
+        # Get legacy live message
+        msg_id, chan_id = get_live_message_info(data)
+
+    if msg_id and chan_id and bot.guilds:
+        guild_id = bot.guilds[0].id
+        return f"[Go to Live Betting Message](https://discord.com/channels/{guild_id}/{chan_id}/{msg_id})"
+    return ""
+
+
 def get_session_live_message_info(data: Data, session_id: str) -> Tuple[Optional[int], Optional[int]]:
     """Retrieve the live message id and channel id for a given session."""
     session = data.get("betting_sessions", {}).get(session_id)
@@ -279,6 +333,23 @@ def set_session_live_message_info(data: Data, session_id: str, message_id: Optio
     if channel_id is not None:
         session["channel_id"] = channel_id
     save_data(data)
+    # Instrumentation: write a small audit line when a session mapping is persisted.
+    # This helps correlate send -> persist -> incoming reaction timings during
+    # debugging without exposing filesystem paths to Discord messages.
+    try:
+        import os
+        import datetime
+
+        logs_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "logs"))
+        os.makedirs(logs_dir, exist_ok=True)
+        session_map_file = os.path.join(logs_dir, "session_mapping.log")
+        with open(session_map_file, "a", encoding="utf-8") as f:
+            ts = datetime.datetime.now(datetime.UTC).isoformat() + "Z"
+            f.write(f"[{ts}] Persisted session mapping: session_id={session_id}, message_id={message_id}, channel_id={channel_id}\n")
+            f.flush()
+    except Exception:
+        # Don't let instrumentation failures affect normal operation
+        pass
 
 
 async def _get_message_and_user(

@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any, Mapping
+from typing import List, Dict, Optional, Any, Mapping, Tuple
 import discord
 import math
 from .bet_state import BetInfo, WinnerInfo, BettingSession, TimerInfo
@@ -75,16 +75,17 @@ class MessageFormatter:
         if total_pot > 0:
             summary.append(f"💰 **{total_pot}** coins total\n\n")
 
-        contestant_bets: Dict[str, List[BetInfo]] = {c_id: [] for c_id in contestants}
+        contestant_bets: Dict[str, List[Tuple[str, BetInfo]]] = {c_id: [] for c_id in contestants}
         for user_id, bet_info in bets.items():
             for c_id, c_name in contestants.items():
                 if bet_info["choice"] == c_name.lower():
-                    contestant_bets[c_id].append(bet_info)
+                    contestant_bets[c_id].append((user_id, bet_info))
                     break
 
         for c_id, c_name in contestants.items():
-            total_for_contestant = sum(b["amount"] for b in contestant_bets[c_id])
-            num_bettors = len(contestant_bets[c_id])
+            bet_list = contestant_bets[c_id]
+            total_for_contestant = sum(bet_info["amount"] for _, bet_info in bet_list)
+            num_bettors = len(bet_list)
             bet_bar = MessageFormatter._generate_bet_progress_bar(
                 total_for_contestant, total_pot
             )
@@ -109,11 +110,10 @@ class MessageFormatter:
                 # Show individual bets in compact format (max 3, then "and X
                 # more")
                 sorted_bets = sorted(
-                    contestant_bets[c_id], key=lambda x: x["amount"], reverse=True
+                    bet_list, key=lambda x: x[1]["amount"], reverse=True
                 )
                 shown_bets = sorted_bets[:3]
-                for bet_info in shown_bets:
-                    user_id = next(uid for uid, b in bets.items() if b == bet_info)
+                for user_id, bet_info in shown_bets:
                     user_name = user_names.get(user_id, f"Unknown User ({user_id})")
                     summary.append(f"  •  **{user_name}** `{bet_info['amount']}`")
 

@@ -54,6 +54,19 @@ class TimerInfo(TypedDict):
     total: int
 
 
+def make_bet_info(amount: int, choice: str, emoji: Optional[str] = None) -> "BetInfo":
+    """Helper to construct a BetInfo TypedDict instance.
+
+    Use this when creating bet entries so static type checkers infer the
+    correct TypedDict type without needing repeated casts.
+    """
+    return {
+        "amount": amount,
+        "choice": choice.lower(),
+        "emoji": emoji,
+    }
+
+
 TransactionType = Literal["add", "remove", "set"]
 
 
@@ -418,3 +431,191 @@ class BetState:
         """Helper to send consistent embed messages."""
         embed = discord.Embed(title=title, description=description, color=color)
         await ctx.send(embed=embed)
+
+
+class SessionBetState:
+    """Thin wrapper that exposes the same public BetState API but operates on a
+    per-session betting dict instead of `data["betting"]`.
+
+    This allows reusing the existing economy and result-processing logic while
+    keeping session state isolated in `data["betting_sessions"][session_id]`.
+    """
+
+    def __init__(self, data: Data, session: BettingSession):
+        self.data = data
+        self.session = session
+        self.economy = Economy(data)
+
+    def update_session(self, session: BettingSession) -> None:
+        self.session = session
+
+    def update_data(self, data: Data) -> None:
+        """Compatibility shim: accept the same update_data(data) signature as BetState.
+
+        For legacy single-session code paths that call update_data(data), this will
+        attach the session view to `data['betting']`.
+        """
+        self.data = data
+        # Defensive: if there's a top-level 'betting' key, treat it as the session
+        if "betting" in data:
+            self.session = data["betting"]
+        # otherwise the caller should set session explicitly via update_session
+
+    def get_betting_session(self) -> BettingSession:
+        return {
+            "contestants": self.contestants,
+            "bets": self.bets,
+            "open": self.is_open,
+            "locked": self.is_locked,
+        }
+
+    @property
+    def is_open(self) -> bool:
+        return bool(self.session.get("open", False))
+
+    @property
+    def is_locked(self) -> bool:
+        return bool(self.session.get("locked", False))
+
+    @property
+    def contestants(self) -> Dict[str, str]:
+        return self.session.get("contestants", {})
+
+    @property
+    def bets(self) -> Dict[str, BetInfo]:
+        return self.session.get("bets", {})
+
+    def get_total_pot(self) -> int:
+        return sum(bet["amount"] for bet in self.bets.values())
+
+    def get_contestant_totals(self) -> Dict[str, int]:
+        totals = {contestant_id: 0 for contestant_id in self.contestants.keys()}
+        for bet in self.bets.values():
+            for c_id, c_name in self.contestants.items():
+                if bet["choice"] == c_name.lower():
+                    totals[c_id] += bet["amount"]
+                    break
+        return totals
+
+    def get_user_bet(self, user_id: str) -> Optional[BetInfo]:
+        return self.bets.get(user_id)
+
+    def calculate_round_results(self, winner_name: Optional[str]) -> Dict[str, Any]:
+        # Reuse the same algorithm as BetState but applied to session bets
+        total_pot = sum(bet["amount"] for bet in self.bets.values())
+
+        user_results: Dict[str, UserResult] = {}
+        winning_users: List[str] = []
+        losing_users: List[str] = []
+
+        if not winner_name:
+            winning_pot = 0
+            bets_on_winner = 0
+            for user_id, bet_info in self.bets.items():
+                bet_amount = bet_info["amount"]
+                current_balance = self.economy.get_balance(user_id)
+                user_results[user_id] = {
+                    "winnings": 0,
+                    "bet_amount": bet_amount,
+                    "new_balance": current_balance,
+                    "net_change": -bet_amount,
+                }
+                losing_users.append(user_id)
+        else:
+            winner_name_lower = winner_name.lower()
+            winning_pot = sum(
+                bet["amount"]
+                for bet in self.bets.values()
+                if bet["choice"].lower() == winner_name_lower
+            )
+
+            bets_on_winner = sum(
+                1
+                for bet in self.bets.values()
+                if bet["choice"].lower() == winner_name_lower
+            )
+
+            for user_id, bet_info in self.bets.items():
+                bet_amount = bet_info["amount"]
+                current_balance = self.economy.get_balance(user_id)
+                is_winner = bet_info["choice"].lower() == winner_name_lower
+
+                if is_winner and winning_pot > 0:
+                    winning_amount = int((bet_amount / winning_pot) * total_pot)
+                    net_change = winning_amount - bet_amount
+                    new_balance = current_balance + winning_amount
+                    winning_users.append(user_id)
+                else:
+                    winning_amount = 0
+                    net_change = -bet_amount
+                    new_balance = current_balance
+                    losing_users.append(user_id)
+
+                user_results[user_id] = {
+                    "winnings": winning_amount,
+                    "bet_amount": bet_amount,
+                    "new_balance": new_balance,
+                    "net_change": net_change,
+                }
+
+        return {
+            "total_pot": total_pot,
+            "winning_pot": winning_pot,
+            "bets_on_winner": bets_on_winner,
+            "user_results": user_results,
+            "winning_users": winning_users,
+            "losing_users": losing_users,
+        }
+
+    def place_bet(
+        self, user_id: str, amount: int, choice: str, emoji: Optional[str] = None
+    ) -> bool:
+        if not self.is_open or self.is_locked:
+            return False
+
+        old_amount = self.bets.get(user_id, {}).get("amount", 0)
+
+        if not self.economy.process_bet_placement(user_id, amount, old_amount):
+            return False
+
+        # ensure bets dict exists in session
+        if "bets" not in self.session:
+            self.session["bets"] = {}
+
+        # Cast the literal to BetInfo so static type checkers accept the assignment
+        self.session["bets"][user_id] = cast(
+            BetInfo,
+            {
+                "amount": amount,
+                "choice": choice.lower(),
+                "emoji": emoji,
+            },
+        )
+        save_data(self.data)
+        return True
+
+    def lock_bets(self) -> None:
+        self.session["open"] = False
+        self.session["locked"] = True
+        # session-level timers (if any) should be cleared by caller
+        save_data(self.data)
+
+    def declare_winner(self, winner_name: Optional[str]) -> WinnerInfo:
+        results = self.calculate_round_results(winner_name)
+        # Process results through economy
+        self.economy.process_bet_results(results)
+
+        # Reset session state
+        self.session["open"] = False
+        self.session["locked"] = False
+        self.session["bets"] = {}
+        self.session["contestants"] = {}
+        save_data(self.data)
+
+        return {
+            "name": winner_name if winner_name else "",
+            "total_pot": results["total_pot"],
+            "winning_pot": results["winning_pot"],
+            "user_results": results["user_results"],
+        }
+
