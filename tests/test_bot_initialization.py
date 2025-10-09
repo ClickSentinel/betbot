@@ -184,3 +184,26 @@ class TestBotInitialization:
 
         # Clean up
         asyncio.run(bot.close())
+
+    @patch("bot.MyBot.load_extension")
+    async def test_bot_initialization_loads_cogs(self, mock_load_extension):
+        """Test that the bot initializes and attempts to load all cogs."""
+        intents = discord.Intents.default()
+        bot = MyBot(command_prefix="!", intents=intents)
+        await bot.setup_hook()
+
+        expected_cogs = [
+            "cogs.bet_commands",
+            "cogs.reaction_handler",
+            "cogs.live_message_manager",
+            "cogs.session_manager",
+            "cogs.bet_utils",
+            "cogs.economy",
+            "cogs.help",
+        ]
+
+        for cog in expected_cogs:
+            mock_load_extension.assert_any_call(cog)
+
+        # Clean up
+        await bot.close()

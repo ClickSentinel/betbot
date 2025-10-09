@@ -6,7 +6,7 @@ complex mock infrastructure issues.
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch, MagicMock
 import discord
 
 from cogs.reaction_handler import ReactionHandler
@@ -113,23 +113,43 @@ class TestReactionSystemCore:
 
         with patch("cogs.reaction_handler.load_data", return_value=mock_data), patch(
             "cogs.reaction_handler.save_data"
-        ), patch("cogs.betting.schedule_live_message_update"), patch(
+        ), patch("cogs.reaction_handler.schedule_live_message_update"), patch(
             "cogs.reaction_handler.ensure_user"
         ), patch("cogs.reaction_handler.set_bet", side_effect=mock_set_bet):
 
-            # Test 1: Rapid reactions should batch correctly
-            reactions = ["🔥", "⚡", "💪", "🌟"]  # Mix of contestants and amounts
+            # Simulate a series of rapid reactions
+            payload_fire = MagicMock()
+            payload_fire.user_id = 123
+            payload_fire.message_id = 999
+            payload_fire.channel_id = 888
+            payload_fire.emoji = "🔥"
 
-            # Simulate rapid clicking
-            for emoji in reactions:
-                payload = Mock()
-                payload.user_id = 123
-                payload.message_id = 999
-                payload.channel_id = 888
-                payload.emoji = emoji
+            payload_thunder = MagicMock()
+            payload_thunder.user_id = 123
+            payload_thunder.message_id = 999
+            payload_thunder.channel_id = 888
+            payload_thunder.emoji = "⚡"
 
-                await cog.on_raw_reaction_add(payload)
-                await asyncio.sleep(0.1)  # Rapid but not instant
+            payload_fist = MagicMock()
+            payload_fist.user_id = 123
+            payload_fist.message_id = 999
+            payload_fist.channel_id = 888
+            payload_fist.emoji = "💪"
+
+            payload_star = MagicMock()
+            payload_star.user_id = 123
+            payload_star.message_id = 999
+            payload_star.channel_id = 888
+            payload_star.emoji = "🌟"
+
+            # Fire! (test user 123 clicks 🔥)
+            await cog.on_raw_reaction_add(payload_fire)
+            # Thunder! (test user 123 clicks ⚡)
+            await cog.on_raw_reaction_add(payload_thunder)
+            # Fist! (test user 123 clicks 💪)
+            await cog.on_raw_reaction_add(payload_fist)
+            # Star! (test user 123 clicks 🌟)
+            await cog.on_raw_reaction_add(payload_star)
 
             # Wait for batching to complete
             await asyncio.sleep(2.0)
@@ -196,10 +216,10 @@ class TestReactionSystemCore:
         cog.bot.get_channel = Mock(return_value=mock_channel)
         cog.bot.fetch_user = AsyncMock(return_value=mock_user)
 
-        with patch("cogs.betting.load_data", return_value=mock_data), patch(
-            "cogs.betting.save_data"
-        ), patch("cogs.betting.schedule_live_message_update"), patch(
-            "cogs.betting.ensure_user"
+        with patch("cogs.reaction_handler.load_data", return_value=mock_data), patch(
+            "cogs.reaction_handler.save_data"
+        ), patch("cogs.reaction_handler.schedule_live_message_update"), patch(
+            "cogs.reaction_handler.ensure_user"
         ):
 
             # Try to bet 100 coins with only 50 available
@@ -273,7 +293,7 @@ class TestReactionSystemCore:
         cog.bot.get_channel = Mock(return_value=mock_channel)
         cog.bot.fetch_user = AsyncMock(return_value=mock_user)
 
-        with patch("cogs.betting.load_data", return_value=mock_data):
+        with patch("cogs.reaction_handler.load_data", return_value=mock_data):
 
             payload = Mock()
             payload.user_id = 123
@@ -357,15 +377,19 @@ class TestReactionSystemCore:
                 return True
             return False
 
-        with patch("cogs.betting.load_data", return_value=mock_data), patch(
-            "cogs.betting.save_data"
-        ), patch("cogs.betting.schedule_live_message_update"), patch(
-            "cogs.betting.ensure_user"
-        ), patch.object(
-            cog, "_process_bet", side_effect=mock_process_bet
-        ):
+        with patch("cogs.reaction_handler.load_data", return_value=mock_data), patch(
+            "cogs.reaction_handler.save_data"
+        ), patch("cogs.reaction_handler.schedule_live_message_update"), patch(
+            "cogs.reaction_handler.ensure_user"
+        ), patch("cogs.bet_utils.BetUtils._process_bet", side_effect=mock_process_bet):
+            # Create a mock payload
+            payload = MagicMock()
+            payload.user_id = 456
+            payload.message_id = 999
+            payload.channel_id = 888
+            payload.emoji = "🔥"  # Bet amount emoji
 
-            # Manually add a pending bet (simulating primary timer failure)
+            # Simulate primary processing failure by not calling _process_bet
             cog._pending_reaction_bets[456] = {
                 "message": mock_message,
                 "user": mock_user,

@@ -160,7 +160,7 @@ class TestBetting:
         bet_commands_cog._send_embed = AsyncMock()
 
         # Execute - Call the underlying method directly
-        with patch("cogs.betting.load_data", return_value=test_data):
+        with patch("cogs.bet_commands.load_data", return_value=test_data):
             await bet_commands_cog.place_bet.callback(bet_commands_cog, mock_ctx, "100", "Alice")
 
         # Assert
@@ -292,9 +292,9 @@ class TestBetting:
         bet_commands_cog._send_embed = AsyncMock()
 
         # Execute - Increase bet to 700 (needs 400 more, has 500 available)
-        with patch("cogs.betting.load_data", return_value=test_data), patch(
-            "cogs.betting.save_data"
-        ) as mock_save, patch("cogs.betting.update_live_message"):
+        with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+            "cogs.bet_commands.save_data"
+        ) as mock_save, patch("cogs.bet_commands.update_live_message"):
             await bet_commands_cog.place_bet.callback(bet_commands_cog, mock_ctx, "700", "Alice")
 
         # Assert - Should succeed with regular bet placed message (not "changed
@@ -440,9 +440,9 @@ class TestBetting:
         bet_commands_cog._send_embed = AsyncMock()
 
         # Execute - Place a manual bet with no existing bet
-        with patch("cogs.betting.load_data", return_value=test_data), patch(
-            "cogs.betting.save_data"
-        ), patch("cogs.betting.update_live_message", new_callable=AsyncMock):
+        with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+            "cogs.bet_commands.save_data"
+        ), patch("cogs.bet_commands.update_live_message", new_callable=AsyncMock):
             await bet_commands_cog.place_bet.callback(bet_commands_cog, mock_ctx, "100", "Alice")
 
         # Assert - Reaction removal should NOT be called
@@ -473,9 +473,9 @@ class TestBetting:
         bet_commands_cog._send_embed = AsyncMock()
 
         # Execute - Place another manual bet (change from Alice to Bob)
-        with patch("cogs.betting.load_data", return_value=test_data), patch(
-            "cogs.betting.save_data"
-        ), patch("cogs.betting.update_live_message", new_callable=AsyncMock):
+        with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+            "cogs.bet_commands.save_data"
+        ), patch("cogs.bet_commands.update_live_message", new_callable=AsyncMock):
             await bet_commands_cog.place_bet.callback(bet_commands_cog, mock_ctx, "100", "Bob")
 
         # Assert - Reaction removal should NOT be called (was manual -> manual)
@@ -858,9 +858,9 @@ class TestBetting:
         bet_commands_cog._send_embed = AsyncMock()
 
         # Mock timer expiry by calling the handler directly
-        with patch("cogs.betting.load_data", return_value=test_data), patch(
-            "cogs.betting.save_data"
-        ), patch("cogs.betting.update_live_message"):
+        with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+            "cogs.bet_commands.save_data"
+        ), patch("cogs.bet_commands.update_live_message"):
             await bet_commands_cog._handle_timer_expired(mock_ctx)
 
         # Assert - Should have locked the bets

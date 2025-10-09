@@ -51,8 +51,8 @@ async def test_live_message_endstate_after_winner_declared():
     betting_cog = BetCommands(mock_bot)
 
     # Patch load_data and save_data used by betting flow and scheduler
-    with patch("cogs.betting.load_data", return_value=test_data), patch(
-        "cogs.betting.save_data"
+    with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+        "cogs.bet_commands.save_data"
     ), patch("data_manager.load_data", return_value=test_data):
         # patch fetch_user to return name
         mock_user = MagicMock()
@@ -88,9 +88,7 @@ async def test_live_message_endstate_after_winner_declared():
 async def test_live_message_endstate_after_lock():
     """Ensure the live message remains the locked results embed after locking and a batched update."""
     mock_bot = MagicMock(spec=discord.Client)
-    mock_channel = MagicMock()
-    # Make sure isinstance check passes
-    mock_channel.__class__ = discord.TextChannel
+    mock_channel = MagicMock(spec=discord.TextChannel)
     mock_message = AsyncMock(spec=discord.Message)
     mock_message.edit = AsyncMock()
     mock_channel.fetch_message = AsyncMock(return_value=mock_message)
@@ -121,14 +119,19 @@ async def test_live_message_endstate_after_lock():
     betting_cog = BetCommands(mock_bot)
     betting_cog._send_embed = AsyncMock()
 
-    # Mock the BetUtils cog but allow _lock_bets_internal to call real implementation
+    # Create BetUtils instance for utility methods
     from cogs.bet_utils import BetUtils
     bet_utils_cog = BetUtils(mock_bot)
     bet_utils_cog._send_embed = AsyncMock()
     mock_bot.get_cog = MagicMock(return_value=bet_utils_cog)
 
-    with patch("cogs.betting.load_data", return_value=test_data), patch(
-        "cogs.betting.save_data"
+    # Mock user fetch and data loading
+    mock_user = MagicMock()
+    mock_user.display_name = "Bettor"
+    mock_bot.fetch_user = AsyncMock(return_value=mock_user)
+
+    with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+        "cogs.bet_commands.save_data"
     ), patch("data_manager.load_data", return_value=test_data):
         # Call the lock flow (now on BetUtils)
         await bet_utils_cog._lock_bets_internal(mock_ctx)

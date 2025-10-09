@@ -71,41 +71,32 @@ async def test_reopen_after_close(mock_bot, mock_ctx, mock_message):
 
     # Patch load/save/live-message helpers used by openbet and run the flow
     # inside the patched context so `load_data` returns our `test_data`.
-    with patch("cogs.betting.load_data", return_value=test_data), patch(
-        "cogs.betting.save_data"
-    ), patch("cogs.betting.clear_live_message_info"), patch(
-        "cogs.betting.set_live_message_info"
-    ), patch("cogs.betting.update_live_message"), patch(
+    with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+        "cogs.bet_commands.save_data"
+    ), patch("cogs.bet_commands.clear_live_message_info"), patch(
+        "cogs.bet_commands.set_live_message_info"
+    ), patch("cogs.bet_commands.update_live_message"), patch(
         "discord.utils.get"
-    ) as mock_get, patch("cogs.betting.get_saved_bet_channel_id", return_value=None):
-
-        # Ensure permission check passes by returning a betboy role
+    ) as mock_get, patch("cogs.bet_commands.get_saved_bet_channel_id", return_value=None):
+        # Mock role check to succeed
         mock_get.return_value = MockRole("betboy")
 
-        # Make isinstance checks against discord.TextChannel succeed in the
-        # test environment by pointing the module symbol to MagicMock.
-        import cogs.betting as cb
-        cb.discord.TextChannel = MagicMock
-
-        # Instantiate the cog under the patched load_data so it uses our test_data
+        # Instantiate the cog and call openbet
+        from cogs.bet_commands import BetCommands
         betting_cog = BetCommands(mock_bot)
-
-        # Bypass permission checking for the command to focus on the
-        # session-name conflict behavior (other tests validate permissions).
         betting_cog._check_permission = AsyncMock(return_value=True)
 
-        # Call openbet to create a new session with the same contestant names
-        await betting_cog.openbet.callback(betting_cog, mock_ctx, "Alice", "Bob")
+        # Call openbet with correct arguments
+        await betting_cog.openbet(mock_ctx, "Alice", "Bob")
 
-    # After calling openbet a new session should exist and be active
-    assert len(test_data["betting_sessions"]) == 2
+        # Verify a new session was created
+        open_sessions = [sid for sid, s in test_data["betting_sessions"].items() if s.get("status") == "open"]
+        assert len(open_sessions) == 1
+        new_session_id = open_sessions[0]
+        new_session = test_data["betting_sessions"][new_session_id]
 
-    # Find the newly created session id (not the closed one)
-    new_session_id = next(sid for sid in test_data["betting_sessions"] if sid != closed_session_id)
-    new_session = test_data["betting_sessions"][new_session_id]
-
-    assert new_session["status"] == "open"
-    assert new_session["contestants"]["c1"] == "Alice"
-    assert new_session["contestants"]["c2"] == "Bob"
-    # contestant_to_session should map the lowercase name to the new session id
-    assert test_data["contestant_to_session"]["alice"] == new_session_id
+        assert new_session["status"] == "open"
+        assert new_session["contestants"]["c1"] == "Alice"
+        assert new_session["contestants"]["c2"] == "Bob"
+        # contestant_to_session should map the lowercase name to the new session id
+        assert test_data["contestant_to_session"]["alice"] == new_session_id

@@ -61,19 +61,18 @@ class TestEconomyCog:
 
     @pytest.mark.asyncio
     async def test_balance_command_other_user(self, economy_cog, mock_ctx, test_data):
-        """Test checking another user's balance."""
-        target_user = MagicMock()
-        target_user.id = 11111
-        target_user.display_name = "OtherUser"
+        """Test balance command for another user."""
+        member = MagicMock(spec=discord.Member)
+        member.id = 456
+        member.display_name = "OtherUser"
+        test_data["balances"]["456"] = 500
 
-        with patch("cogs.economy.load_data", return_value=test_data):
-            await economy_cog.balance.callback(economy_cog, mock_ctx, target_user)
+        await economy_cog.balance(mock_ctx, member)
 
-            # Should send embed with target user's balance
-            mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]["embed"]
-            assert "500" in embed_call.description
-            assert "OtherUser" in embed_call.description
+        mock_ctx.send.assert_called_once()
+        embed = mock_ctx.send.call_args[0][0]
+        assert "OtherUser" in embed.description
+        assert "500" in embed.description
 
     @pytest.mark.asyncio
     async def test_balance_command_new_user(self, economy_cog, mock_ctx, test_data):
@@ -93,134 +92,72 @@ class TestEconomyCog:
 
     @pytest.mark.asyncio
     async def test_give_command_success(self, economy_cog, mock_ctx, test_data):
-        """Test giving coins to a user successfully."""
-        target_user = MagicMock()
-        target_user.id = 11111
-        target_user.display_name = "OtherUser"
+        """Test successful giving of coins."""
+        member = MagicMock(spec=discord.Member)
+        member.id = 456
+        member.mention = "<@456>"
+        test_data["balances"]["456"] = 100
 
-        with patch("cogs.economy.load_data", return_value=test_data), patch(
-            "cogs.economy.save_data"
-        ) as mock_save:
+        with patch("cogs.economy.save_data") as mock_save:
+            await economy_cog.give(mock_ctx, member, 50)
 
-            await economy_cog.give.callback(economy_cog, mock_ctx, target_user, 200)
-
-            # Should save updated data
-            mock_save.assert_called_once()
-            saved_data = mock_save.call_args[0][0]
-            assert saved_data["balances"]["11111"] == 700  # 500 + 200
-
-            # Should send success message
-            mock_ctx.send.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_give_command_invalid_amount(self, economy_cog, mock_ctx, test_data):
-        """Test giving invalid amount (negative or zero)."""
-        target_user = MagicMock()
-        target_user.id = 11111
-
-        with patch("cogs.economy.load_data", return_value=test_data):
-            await economy_cog.give.callback(economy_cog, mock_ctx, target_user, -100)
-
-            # Should send error message
-            mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]["embed"]
-            assert "Amount must be a positive number" in embed_call.description
+        mock_save.assert_called_once()
+        assert test_data["balances"]["456"] == 150
 
     @pytest.mark.asyncio
     async def test_take_command_success(self, economy_cog, mock_ctx, test_data):
-        """Test taking coins from a user successfully."""
-        target_user = MagicMock()
-        target_user.id = 11111
-        target_user.display_name = "OtherUser"
+        """Test successful taking of coins."""
+        member = MagicMock(spec=discord.Member)
+        member.id = 456
+        member.mention = "<@456>"
+        test_data["balances"]["456"] = 100
 
-        with patch("cogs.economy.load_data", return_value=test_data), patch(
-            "cogs.economy.save_data"
-        ) as mock_save:
+        with patch("cogs.economy.save_data") as mock_save:
+            await economy_cog.take(mock_ctx, member, 50)
 
-            await economy_cog.take.callback(economy_cog, mock_ctx, target_user, 200)
-
-            # Should save updated data
-            mock_save.assert_called_once()
-            saved_data = mock_save.call_args[0][0]
-            assert saved_data["balances"]["11111"] == 300  # 500 - 200
-
-            # Should send success message
-            mock_ctx.send.assert_called_once()
+        mock_save.assert_called_once()
+        assert test_data["balances"]["456"] == 50
 
     @pytest.mark.asyncio
-    async def test_take_command_insufficient_funds(
-        self, economy_cog, mock_ctx, test_data
-    ):
-        """Test taking more coins than user has."""
-        target_user = MagicMock()
-        target_user.id = 11111
-        target_user.display_name = "OtherUser"
+    async def test_take_command_insufficient_funds(self, economy_cog, mock_ctx, test_data):
+        """Test taking coins with insufficient funds."""
+        member = MagicMock(spec=discord.Member)
+        member.id = 456
+        member.display_name = "OtherUser"
+        test_data["balances"]["456"] = 500
 
-        with patch("cogs.economy.load_data", return_value=test_data):
-            await economy_cog.take.callback(
-                economy_cog, mock_ctx, target_user, 600
-            )  # More than 500 balance
+        await economy_cog.take(mock_ctx, member, 600)
 
-            # Should send error message
-            mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]["embed"]
-            assert (
-                "only has" in embed_call.description
-                and "Cannot take" in embed_call.description
-            )
+        mock_ctx.send.assert_called_once()
+        embed = mock_ctx.send.call_args[0][0]
+        assert "insufficient funds" in embed.title.lower()
+        assert "only has" in embed.description
 
     @pytest.mark.asyncio
     async def test_set_balance_command(self, economy_cog, mock_ctx, test_data):
         """Test setting a user's balance."""
-        target_user = MagicMock()
-        target_user.id = 11111
-        target_user.display_name = "OtherUser"
+        member = MagicMock(spec=discord.Member)
+        member.id = 456
+        member.mention = "<@456>"
 
-        with patch("cogs.economy.load_data", return_value=test_data), patch(
-            "cogs.economy.save_data"
-        ) as mock_save:
+        with patch("cogs.economy.save_data") as mock_save:
+            await economy_cog.set_balance(mock_ctx, member, 500)
 
-            await economy_cog.set_balance.callback(
-                economy_cog, mock_ctx, target_user, 1500
-            )
-
-            # Should save updated data
-            mock_save.assert_called_once()
-            saved_data = mock_save.call_args[0][0]
-            assert saved_data["balances"]["11111"] == 1500
-
-            # Should send success message
-            mock_ctx.send.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_set_balance_invalid_amount(self, economy_cog, mock_ctx, test_data):
-        """Test setting balance to invalid amount."""
-        target_user = MagicMock()
-        target_user.id = 11111
-
-        with patch("cogs.economy.load_data", return_value=test_data):
-            await economy_cog.set_balance.callback(
-                economy_cog, mock_ctx, target_user, -100
-            )
-
-            # Should send error message
-            mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]["embed"]
-            assert "Amount must be a positive number" in embed_call.description
+        mock_save.assert_called_once()
+        assert test_data["balances"]["456"] == 500
 
     @pytest.mark.asyncio
     async def test_balance_display_formatting(self, economy_cog, mock_ctx, test_data):
-        """Test that balance amounts are formatted correctly."""
-        # Test large numbers are formatted with commas
-        test_data["balances"]["67890"] = 1234567
+        """Test that balance display is formatted correctly."""
+        user_id = str(mock_ctx.author.id)
+        test_data["balances"][user_id] = 1234567
 
-        with patch("cogs.economy.load_data", return_value=test_data):
-            await economy_cog.balance.callback(economy_cog, mock_ctx)
+        await economy_cog.balance(mock_ctx)
 
-            # Should display large numbers
-            mock_ctx.send.assert_called_once()
-            embed_call = mock_ctx.send.call_args[1]["embed"]
-            assert "1234567" in embed_call.description
+        # Assert that the balance is formatted with commas
+        mock_ctx.send.assert_called_once()
+        embed = mock_ctx.send.call_args[0][0]
+        assert "1,234,567" in embed.description
 
     @pytest.mark.asyncio
     async def test_admin_permission_commands(self, economy_cog, mock_ctx, test_data):

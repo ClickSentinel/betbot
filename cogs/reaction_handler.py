@@ -642,26 +642,7 @@ class ReactionHandler(commands.Cog):
         
         BettingPermissions.check_permission = patched_check_permission
 
-        # Create a minimal fake context
-        class FakeContext:
-            def __init__(self, bot, channel, author):
-                self.bot = bot
-                self.channel = channel
-                self.author = author
-                self.guild = getattr(channel, 'guild', None)
-                
-                # Ensure author has the required role for permission checks
-                if not hasattr(author, 'roles') or not author.roles:
-                    # Create a mock role with the required name
-                    mock_role = type('MockRole', (), {'name': 'betboy'})()
-                    author.roles = [mock_role]
-
-            async def send(self, *args, **kwargs):
-                # Fake context doesn't actually send messages
-                # This is just for permission checking compatibility
-                pass
-
-        return FakeContext(self.bot, channel, user)
+        return FakeContext(self.bot, channel, author)
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(
@@ -794,3 +775,32 @@ class ReactionHandler(commands.Cog):
 async def setup(bot):
     """Setup function for the reaction_handler cog."""
     await bot.add_cog(ReactionHandler(bot))
+
+class FakeContext:
+    def __init__(self, bot, channel, author):
+        self.bot = bot
+        self.channel = channel
+        self.author = author
+        self.guild = getattr(channel, 'guild', None)
+
+        # Ensure author has the required role for permission checks
+        if not hasattr(author, 'roles') or not author.roles:
+            # Create a mock role with the required name
+            mock_role = type('MockRole', (), {'name': 'betboy'})()
+            # Create a mock author with roles instead of modifying the real object
+            mock_author = type('MockAuthor', (), {
+                'id': author.id,
+                'name': author.name,
+                'display_name': getattr(author, 'display_name', author.name),
+                'roles': [mock_role],
+                'guild': getattr(author, 'guild', None),
+                'guild_permissions': getattr(author, 'guild_permissions', None),
+                'bot': getattr(author, 'bot', False),
+                'system': getattr(author, 'system', False),
+            })()
+            self.author = mock_author
+
+    async def send(self, *args, **kwargs):
+        # Fake context doesn't actually send messages
+        # This is just for permission checking compatibility
+        pass

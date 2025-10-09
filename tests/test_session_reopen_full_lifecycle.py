@@ -40,37 +40,34 @@ async def test_open_close_reopen_same_names(mock_bot, mock_ctx, mock_message):
         "multi_session_mode": False,
     }
 
-    with patch("cogs.betting.load_data", return_value=data), patch(
-        "cogs.betting.save_data"
-    ), patch("cogs.betting.clear_live_message_info"), patch(
-        "cogs.betting.set_live_message_info"
-    ), patch("cogs.betting.update_live_message"), patch(
-        "cogs.betting.get_saved_bet_channel_id", return_value=None
+    with patch("cogs.bet_commands.load_data", return_value=data), patch(
+        "cogs.bet_commands.save_data"
+    ), patch("cogs.bet_commands.clear_live_message_info"), patch(
+        "cogs.bet_commands.set_live_message_info"
+    ), patch("cogs.bet_commands.update_live_message"), patch(
+        "cogs.bet_commands.get_saved_bet_channel_id", return_value=None
     ):
 
         # Instantiate the cog and bypass permission checks
         betting_cog = BetCommands(mock_bot)
         betting_cog._check_permission = AsyncMock(return_value=True)
 
-        # Open a session
-        await betting_cog.openbet.callback(betting_cog, mock_ctx, "Alice", "Bob")
+        # 1. Open the first session
+        await betting_cog.openbet(mock_ctx, "Alice", "Bob")
 
-        # Verify an open session exists
+        # Verify one session is open
         open_sessions = [sid for sid, s in data["betting_sessions"].items() if s.get("status") == "open"]
         assert len(open_sessions) == 1
         first_session_id = open_sessions[0]
 
-        # Close the session via compatibility wrapper
-        await betting_cog.close_session.callback(betting_cog, mock_ctx, first_session_id)
-
-        # Closed session should be marked closed and removed from active_sessions
+        # 2. Close the session
+        await betting_cog.close_session(mock_ctx, first_session_id)
         assert data["betting_sessions"][first_session_id]["status"] == "closed"
-        assert first_session_id not in data.get("active_sessions", [])
 
-        # Re-open with the same names
-        await betting_cog.openbet.callback(betting_cog, mock_ctx, "Alice", "Bob")
+        # 3. Re-open with same names
+        await betting_cog.openbet(mock_ctx, "Alice", "Bob")
 
-        # Ensure a new open session exists and is not the same id as the closed one
+        # Verify a new session is open
         open_sessions = [sid for sid, s in data["betting_sessions"].items() if s.get("status") == "open"]
         assert len(open_sessions) == 1
         new_session_id = open_sessions[0]

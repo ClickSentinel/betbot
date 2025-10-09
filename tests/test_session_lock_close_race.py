@@ -80,8 +80,8 @@ async def test_session_auto_close_and_race():
     mock_user.display_name = "Racer"
     mock_bot.fetch_user = AsyncMock(return_value=mock_user)
 
-    with patch("cogs.betting.load_data", return_value=test_data), patch(
-        "cogs.betting.save_data"
+    with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+        "cogs.bet_commands.save_data"
     ), patch("data_manager.load_data", return_value=test_data):
 
         # Start a background flow that schedules a bunch of updates
@@ -102,7 +102,7 @@ async def test_session_auto_close_and_race():
         # Ensure permission check passes and invoke close flow that an admin might trigger
         betting_cog._check_permission = AsyncMock(return_value=True)
         # Call the command callback to close the session (no winner)
-        await betting_cog.close_session.callback(betting_cog, mock_ctx, session_id)
+        await betting_cog.close_session(mock_ctx, session_id)
 
         # Allow scheduler to run
         await asyncio.sleep(1.0)

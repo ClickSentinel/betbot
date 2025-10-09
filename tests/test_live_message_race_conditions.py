@@ -63,9 +63,12 @@ async def test_rapid_lock_then_winner_race():
     mock_user.display_name = "Tester"
     mock_bot.fetch_user = AsyncMock(return_value=mock_user)
 
-    with patch("cogs.betting.load_data", return_value=test_data), patch(
-        "cogs.betting.save_data"
+    with patch("cogs.bet_commands.load_data", return_value=test_data), patch(
+        "cogs.bet_commands.save_data"
     ), patch("data_manager.load_data", return_value=test_data):
+        # Ensure permission check passes
+        betting_cog._check_permission = AsyncMock(return_value=True)
+
         # Start both flows nearly simultaneously to create a race window
         task_lock = asyncio.create_task(bet_utils_cog._lock_bets_internal(mock_ctx))
         # Give the lock a tiny head start then declare winner

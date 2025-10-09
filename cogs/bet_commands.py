@@ -516,6 +516,24 @@ class BetCommands(commands.Cog):
         bet_utils = cast(BetUtils, self.bot.get_cog("BetUtils"))
         if bet_utils:
             await bet_utils._close_session(ctx, session_id, winner)
+        else:
+            # Fallback implementation for when BetUtils is not available
+            session = d["betting_sessions"][session_id]
+            session["status"] = "closed"
+            session["closed_at"] = time.time()
+            session["closed_by"] = str(ctx.author.id)
+
+            if winner:
+                session["winner"] = winner
+
+            # Remove from active sessions
+            if session_id in d.get("active_sessions", []):
+                d["active_sessions"].remove(session_id)
+
+            save_data(d)
+
+            logger.info(f"Session closed: {session_id} by {ctx.author}")
+            await self._send_embed(ctx, "Session Closed", f"Session '{session_id}' closed successfully.", COLOR_SUCCESS)
 
     @commands.command(name="setbetchannel", aliases=["sbc"])
     @commands.has_permissions(manage_guild=True)

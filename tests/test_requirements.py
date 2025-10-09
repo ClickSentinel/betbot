@@ -239,7 +239,7 @@ def test_all_imports_in_requirements():
             continue
 
         # Also skip standard library modules that might not be in our list
-        if imp in ["dataclasses"]:  # dataclasses is stdlib in Python 3.7+
+        if imp in ["dataclasses", "builtins"]:  # dataclasses is stdlib in Python 3.7+
             continue
 
         third_party_imports.add(normalize_package_name(imp))
