@@ -45,7 +45,11 @@ class MyBot(commands.Bot):
 
         # Load cogs
         logger.info("Loading cogs...")
-        await self.load_extension("cogs.betting")
+        await self.load_extension("cogs.bet_commands")
+        await self.load_extension("cogs.reaction_handler")
+        await self.load_extension("cogs.live_message_manager")
+        await self.load_extension("cogs.session_manager")
+        await self.load_extension("cogs.bet_utils")
         await self.load_extension("cogs.economy")
         await self.load_extension("cogs.help")
         logger.info("Cogs loaded successfully.")
