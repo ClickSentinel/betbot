@@ -19,7 +19,7 @@ BET_TIMER_UPDATE_INTERVAL = 5
 # Toggle REACTION_DEBUG_LOGGING_ENABLED in this file and restart the bot to
 # enable/disable detailed reaction debug logging without exposing your
 # filesystem via bot messages.
-REACTION_DEBUG_LOGGING_ENABLED = False
+REACTION_DEBUG_LOGGING_ENABLED = True
 # If True, administrators can toggle reaction debug logging at runtime
 # using the bot command. Leave False to require editing this file + restart.
 ALLOW_RUNTIME_REACTION_DEBUG_TOGGLE = False
@@ -69,11 +69,6 @@ COLOR_DARK_GRAY = discord.Color(0x607D8B)  # Dark Gray
 # special update (seconds). Keep this small but greater than the scheduler
 # batch window (default 6s).
 LIVE_MESSAGE_SUPPRESSION_SECONDS = 6.0
-COLOR_WARNING = discord.Color(0xF1C40F)  # Yellow
-COLOR_ERROR = discord.Color(0xE74C3C)  # Red
-COLOR_GOLD = discord.Color(0xFFD700)  # Gold
-COLOR_DARK_ORANGE = discord.Color(0xFF8C00)  # Dark Orange
-COLOR_DARK_GRAY = discord.Color(0x607D8B)  # Dark Gray
 
 # ---------- General Messages ----------
 MSG_AMOUNT_POSITIVE = "Amount must be a positive number."
@@ -190,15 +185,12 @@ DESC_ADMIN_HELP = (
     "• `!openbet <name1> <name2>` (or `!ob`) - Start new betting session (creates a dedicated live message & timer)\n"
     "• `!lockbets [target]` (or `!lb`) - Lock bets (stop new bets). In multi-session mode you may provide an optional `target` (contestant name or session id) to select which session to lock.\n"
     "• `!declarewinner <winner>` (or `!dw`) - Declare winner for locked bets\n"
-    "• `!closebet <winner>` (or `!cb`) - **Quick shortcut: lock + declare + distribute.** Works for legacy single-round betting and for individual sessions in multi-session mode (the bot resolves the session by contestant or channel). Use `!closesession <session_id>` only when you want to explicitly target a session id.\n\n"
+    "• `!closebet <winner>` (or `!cb`) - **Quick shortcut: lock + declare + distribute.** Works for legacy single-round betting and for individual sessions in multi-session mode (the bot resolves the session by contestant or channel).\n\n"
     "**⚙️ Bot Settings** *(Manage Server)*\n"
     "• `!setbetchannel` (or `!sbc`) - Set main betting channel\n"
     "• `!togglebettimer` (or `!tbt`) - Toggle auto-timer for bets\n\n"
     "**🎯 Multi-Session Betting (Admin)**\n"
-    "• `!opensession <session_id> <contestant1> <contestant2> [timer]` (or `!os`) - Create and open a new session (alternative to `!openbet`)\n"
-    "• `!listsessions` (or `!ls`) - List active sessions and their status\n"
-    "• `!sessioninfo <session_id>` (or `!si`) - Show detailed info for a session\n"
-    "• `!closesession <session_id> [winner]` (or `!cs`) - Close a session and optionally declare a winner (explicit session targeting)\n\n"
+    "• Multi-session flows are handled via `!openbet` and `!closebet` — explicit `!opensession`/`!closesession` commands are no longer required.\n"
     "**💸 Economy Management** *(Manage Server)*\n"
     "• `!give <@user> <amount>` (or `!g`) - Give coins to user\n"
     "• `!take <@user> <amount>` (or `!t`) - Remove coins from user\n"
