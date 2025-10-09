@@ -43,8 +43,11 @@ class Economy(commands.Cog):
             balance_info = [f"💰 **Your Balance:** `{bal}` coins"]
 
             # Add current bet context if user has an active bet
-            if data["betting"]["open"] or data["betting"]["locked"]:
-                user_bet = data["betting"]["bets"].get(str(target_member.id))
+            # Use canonical accessor so this works in multi-session and legacy modes
+            from data_manager import get_bets
+
+            if data.get("betting", {}).get("open") or data.get("betting", {}).get("locked"):
+                user_bet = get_bets(data).get(str(target_member.id))
                 if user_bet:
                     bet_amount = user_bet["amount"]
                     choice = user_bet["choice"]
@@ -160,4 +163,5 @@ class Economy(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
+    """Set up the Economy cog."""
     await bot.add_cog(Economy(bot))
