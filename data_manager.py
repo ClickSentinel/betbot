@@ -359,3 +359,28 @@ def remove_bet(data: Data, session_id: Optional[str], user_id: str) -> None:
     if "bets" in data["betting"] and user_id in data["betting"]["bets"]:
         del data["betting"]["bets"][user_id]
         save_data(data)
+
+
+def get_user_bets_across_sessions(data: Data, user_id: str) -> Dict[str, Tuple[str, UserBet]]:
+    """Get all bets for a user across all active sessions.
+    
+    Returns a dict mapping session_id to (session_title, bet_info) for sessions
+    where the user has placed a bet.
+    """
+    user_bets = {}
+    
+    # Check multi-session bets
+    if is_multi_session_mode(data):
+        for session_id in data.get("active_sessions", []):
+            session = data.get("betting_sessions", {}).get(session_id)
+            if session and session.get("status") == "open":
+                bets = session.get("bets", {})
+                if user_id in bets:
+                    user_bets[session_id] = (session.get("title", f"Session {session_id}"), bets[user_id])
+    
+    # Also check legacy single-session bets (for backwards compatibility)
+    legacy_bets = data.get("betting", {}).get("bets", {})
+    if user_id in legacy_bets and data.get("betting", {}).get("open", False):
+        user_bets["legacy"] = ("Legacy Session", legacy_bets[user_id])
+    
+    return user_bets
