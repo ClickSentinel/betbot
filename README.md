@@ -14,7 +14,7 @@ A production-ready Discord bot for interactive betting rounds with dual command/
 - **Production Ready**: Comprehensive logging, error handling, and 129 automated tests
 - **Smart Reaction Handling**: Advanced batching system for multiple rapid reactions
 
-- **Per-Session Timers & Live Messages**: Each session created via `!openbet` or `!opensession` has its own live message posted to the configured bet channel and an independent timer; live embeds show precise remaining time.
+- **Per-Session Timers & Live Messages**: Each session created via `!openbet` has its own live message posted to the configured bet channel and an independent timer; live embeds show precise remaining time.
 
 ## 🚀 Quick Start
 
