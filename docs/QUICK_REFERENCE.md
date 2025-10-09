@@ -116,4 +116,4 @@ python -m pytest tests/test_betting.py -v
 
 Per-session live messages & timers
 ---------------------------------
-When you start a session using `!openbet` or `!opensession`, the bot posts a dedicated live embed to the configured bet channel. Each session has an independent timer (if enabled) and the live embed displays the precise remaining time for that session.
+When you start a session using `!openbet`, the bot posts a dedicated live embed to the configured bet channel. Each session has an independent timer (if enabled) and the live embed displays the precise remaining time for that session.

@@ -30,12 +30,12 @@ This short example demonstrates the common admin workflow for running per-sessio
 
    Admin (close with winner):
    ```
-   !closesession patriots_cowboys Patriots
+   !closebet Patriots
    ```
 
    Admin (close without immediate winner):
    ```
-   !closesession patriots_cowboys
+   !closebet Patriots
    ```
 
    The bot will:
@@ -44,7 +44,7 @@ This short example demonstrates the common admin workflow for running per-sessio
    - Update the session's dedicated live embed so the final state is visible in the bet channel
 
 Notes
-- `!openbet` now creates a session with a dedicated live message and timer; `!opensession` remains available when you want to choose a session ID explicitly.
+- `!openbet` now creates a session with a dedicated live message and timer; explicit `!opensession`/`!closesession` commands are no longer required.
 - The bot uses per-session timers to compute remaining time in the embed; this is resilient across restarts because the absolute close timestamp is stored in the session data.
 
 *** End of example ***
